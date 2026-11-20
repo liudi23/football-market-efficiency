@@ -37,10 +37,11 @@ src/sportsq/
   simulate.py      synthetic leagues + markets with injectable inefficiencies
   backtest.py      walk-forward refits, market blend
   staking.py       value-bet selection, shrunk Kelly, bankroll, closing line value
+  inplay.py        in-play 1X2 and over/under prices from score and minute (Step 1: analytic)
 scripts/           sim_study.py, download_data.py, baseline_real.py
 tests/             unit tests (no lookahead, parameter recovery, scoring rules)
 reports/           generated results
-docs/              methodology
+docs/              methodology, in-play plan
 ```
 
 ## First results (simulation, 5 seeds per world)
@@ -69,3 +70,10 @@ All of this matches the methodology. See `reports/sim_study.md`.
 - [ ] Favourite–longshot bias and opening-vs-closing efficiency analysis
 - [ ] C# (.NET) port of the score-grid pricer and backtest, checked against Python
 - [ ] Locked-holdout evaluation and write-up
+- [ ] In-play pricing ([plan](docs/inplay-plan.md)):
+  - [x] Step 1: analytic pricer from score and minute (exact in-play Dixon–Coles correction)
+  - [ ] Step 2: Monte Carlo match-state simulator, checked against Step 1
+  - [ ] Step 3: time-varying goal rates and stoppage time
+  - [ ] Step 4: score effects
+  - [ ] Step 5: red cards
+  - [ ] Step 6: evaluation by minute

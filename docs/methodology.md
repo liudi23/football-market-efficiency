@@ -66,6 +66,43 @@ divisions matter.
 6. **Markets:** 1X2 and over/under 2.5 goals. Wheatcroft found the over/under market
    profitable with shot-based ratings.
 
+## In-play
+
+The in-play extension prices 1X2 and over/under markets at any minute from the current match
+state. The plan, with the order of steps and success criteria, is in
+[inplay-plan.md](inplay-plan.md). Code: `src/sportsq/inplay.py`.
+
+### Step 1: analytic baseline (done)
+
+- **Inputs:**
+  - pre-match goal rates $\lambda_h, \lambda_a$ from Dixon–Coles
+  - current score $(h, a)$
+  - minutes played $m$
+- **Remaining goals:** with $r = (90 - m)/90$, they are
+  $X \sim \text{Poisson}(\lambda_h r)$ and $Y \sim \text{Poisson}(\lambda_a r)$,
+  independent. The final score is $(h + X, a + Y)$, and prices are read off that
+  final-score grid.
+- **Dixon–Coles correction in-play.** The low-score factor $\tau$ is defined on the
+  *full-match* score.
+  - Assume that, given the final counts, goal times are i.i.d. uniform over the match.
+    This is the same assumption that justifies constant rates.
+  - Then conditioning the full-match Dixon–Coles distribution on the score at minute $m$
+    gives exactly
+    $P(\text{final}=(x,y)) \propto \text{Pois}(x-h;\lambda_h r)\,\text{Pois}(y-a;\lambda_a r)\,\tau(x,y)$,
+    by Bayes' rule with Poisson thinning.
+  - So $\tau$ is applied to the *final* score cells, using full-match rates, and the
+    grid is renormalised.
+  - A unit test confirms this against brute-force conditioning.
+  - Consequences: prices at minute 0 equal the pre-match prices exactly; $\tau$ stops
+    mattering once a final count above 1 is certain; and $\rho = 0$ reduces to
+    independent Poisson.
+- **Stoppage time** is not modelled in Step 1: minutes are clipped to [0, 90]. Step 3
+  revisits this.
+- **Known limitations:**
+  - Goal rates are constant within a match (fixed in Step 3).
+  - The score doesn't change behaviour (Step 4).
+  - Red cards are ignored (Step 5).
+
 ## Pre-registered success criteria (holdout)
 
 - **Forecast:** the blend's RPS is below the opening market's, with a 95% CI below 0.
@@ -100,4 +137,5 @@ CLV against Pinnacle and exchange prices is the honest test.
 - Koopman & Lit (2015). A dynamic bivariate Poisson model for the English Premier League. *JRSS A* 178(1); (2019) score-driven models, *IJF* 35(2).
 - Walsh & Joshi (2024). Machine learning for sports betting: accuracy or calibration? *MLWA* 16.
 - Wheatcroft (2020). A profitable model for predicting the over/under market in football. *IJF* 36(3); (2021) Forecasting football matches by predicting match statistics. *JSA* 7(2).
+- Dixon & Robinson (1998). A birth process model for association football matches. *JRSS D* 47(3).
 - Wunderlich & Memmert (2018). The Betting Odds Rating System. *PLOS ONE* 13(6); (2020) Are betting returns a useful measure of accuracy? *IJF* 36(2).

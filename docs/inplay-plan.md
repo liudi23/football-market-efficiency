@@ -1,6 +1,6 @@
 # In-play extension: plan
 
-Status: planned (not started). Written 20 Nov 2026.
+Status: Step 1 done (20 Nov 2026); Steps 2–6 to do. Written 20 Nov 2026.
 
 ## Context (for picking this up in a new conversation)
 
@@ -34,7 +34,7 @@ Use the terms "match-state simulator" or "in-play pricing model", not "digital t
 
 ## Steps
 
-### Step 1 — Analytic in-play pricer (baseline, about half a day)
+### Step 1 — Analytic in-play pricer (baseline, about half a day) ✅ done
 
 - Inputs:
   - pre-match goal rates λ_h and λ_a (from Dixon–Coles)

@@ -11,3 +11,12 @@ reports/*.png
 # private: CVs, job documents, books
 interview-prep/
 .Rhistory
+
+# private: trials and test logs (not pushed)
+logs/
+
+# Betfair historical data (large, licensed): never commit
+data/BASIC/
+data/betfair/
+*.tar
+*.bz2

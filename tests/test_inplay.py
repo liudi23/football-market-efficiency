@@ -4,6 +4,7 @@ Step 1: analytic pricer. Step 2: Monte Carlo simulator agrees with it.
 """
 import numpy as np
 import pytest
+import pandas as pd
 from scipy.stats import binom, poisson
 
 from sportsq import inplay
@@ -11,6 +12,27 @@ from sportsq.dixon_coles import DixonColes, grid_to_1x2, grid_to_over, score_gri
 from sportsq.simulate import simulate
 
 LH, LA, RHO = 1.5, 1.1, -0.08
+
+
+def _compare_mc(est, se, exact, n_sims, min_count=30):
+    """z-scores for cells with enough expected hits; exact Poisson check for rare ones.
+
+    The normal approximation behind z = (MC - exact) / se fails when an event is
+    expected only a handful of times in n_sims draws, so those cells are checked
+    instead by asking whether the observed count is plausible under
+    Poisson(expected count) (two-sided p > 1e-4).
+    """
+    est, se, exact = map(np.asarray, (est, se, exact))
+    p_small = np.minimum(exact, 1 - exact)
+    obs_small = np.where(exact <= 0.5, est, 1 - est) * n_sims
+    rare = p_small * n_sims < min_count
+    for mu, k in zip(p_small[rare] * n_sims, np.round(obs_small[rare])):
+        if mu < 1e-12:
+            assert k == 0
+        else:
+            pval = 2 * min(poisson.cdf(k, mu), poisson.sf(k - 1, mu))
+            assert pval > 1e-4, (mu, k)
+    return (est[~rare] - exact[~rare]) / se[~rare]
 
 
 def test_probabilities_sum_to_one():
@@ -114,11 +136,7 @@ def _z_scores(rho, seed0=100, n_sims=N_SIMS, weighted=True):
             est = np.r_[mc["1x2"], mc["over"]]
             se = np.r_[mc["1x2_se"], mc["over_se"]]
             exact = np.r_[ex["1x2"][0], ex["over"][0]]
-            ok = se > 0
-            # zero-variance cells: either settled, or so rare that seeing none is expected
-            assert (np.abs(est[~ok] - exact[~ok]) < 1e-9).all() or \
-                (exact[~ok] * n_sims < 5).all()
-            zs.extend((est[ok] - exact[ok]) / se[ok])
+            zs.extend(_compare_mc(est, se, exact, n_sims))
     return np.array(zs)
 
 
@@ -171,3 +189,106 @@ def test_simulation_is_reproducible_with_seed():
     a = inplay.simulate_remaining(LH, LA, 0, 0, 10, 1000, seed=42)
     b = inplay.simulate_remaining(LH, LA, 0, 0, 10, 1000, seed=42)
     assert (a["home"] == b["home"]).all() and (a["away"] == b["away"]).all()
+
+
+# ---------------------------------------------------------------------------
+# Step 3: time-varying intensity and stoppage time
+# ---------------------------------------------------------------------------
+def _toy_profile():
+    """Rising intensity with random stoppage, built by hand (no data files needed)."""
+    w = np.array([0.8, 0.9, 1.0, 1.3, 1.0, 1.05, 1.15, 1.25])
+    prof = inplay.GoalIntensity([0, 15, 30, 45], [45, 60, 75, 90], w,
+                                s1=[0.0, 1.0, 2.5, 4.0], s2=[2.0, 3.5, 4.0, 6.5],
+                                probs=[0.2, 0.4, 0.3, 0.1])
+    prof.weights = prof.weights / prof.total()
+    return prof
+
+
+TV_STATES = [(0, 0, 0, 1), (1, 0, 30, 1), (0, 0, 46, 1), (1, 1, 45, 2), (0, 1, 70, 2),
+             (2, 1, 85, 2), (0, 0, 91, 2), (1, 0, 93.5, 2)]
+
+
+def test_constant_profile_reproduces_step1():
+    prof = inplay.GoalIntensity.constant()
+    for h, a, m in [(0, 0, 0), (1, 0, 30), (0, 2, 60), (1, 1, 89)]:
+        for rho in (0.0, RHO):
+            tv = inplay.price_tv(prof, LH, LA, h, a, m, rho=rho)
+            c = inplay.price(LH, LA, h, a, m, rho=rho)
+            assert np.allclose(tv["1x2"], c["1x2"], atol=1e-12)
+            assert np.allclose(tv["over"], c["over"], atol=1e-12)
+
+
+def test_normalisation_keeps_prematch_expected_goals():
+    prof = _toy_profile()
+    assert prof.total() == pytest.approx(1.0)
+    r, w = prof.remaining_share(1, 0.0)
+    assert w @ r == pytest.approx(1.0)
+
+
+def test_mean_stoppage_at_kickoff_equals_prematch_exactly():
+    prof = _toy_profile().with_mean_stoppage()
+    p = inplay.price_tv(prof, LH, LA, 0, 0, 0, period=1, rho=RHO)
+    assert np.allclose(p["1x2"], grid_to_1x2(score_grid(LH, LA, RHO)), atol=1e-12)
+
+
+def test_random_stoppage_at_kickoff_is_close_to_prematch():
+    # mixing over stoppage lengths adds slight overdispersion, nothing more
+    p = inplay.price_tv(_toy_profile(), LH, LA, 0, 0, 0, period=1, rho=RHO)
+    assert np.allclose(p["1x2"], grid_to_1x2(score_grid(LH, LA, RHO)), atol=2e-3)
+
+
+def test_stoppage_time_is_priced_and_match_ends_after_longest_stoppage():
+    prof = _toy_profile()
+    at90 = inplay.price_tv(prof, LH, LA, 0, 0, 90, period=2)["1x2"][0]
+    assert 0.0 < at90[0] < 0.1 and at90[1] < 1.0  # a late goal is still possible
+    later = inplay.price_tv(prof, LH, LA, 0, 0, 95, period=2)["1x2"][0]
+    assert later[1] > at90[1]                       # draw firms as stoppage runs on
+    over = inplay.price_tv(prof, LH, LA, 2, 1, 97, period=2)["1x2"][0]
+    assert np.allclose(over, [1, 0, 0])             # beyond every scenario: settled
+
+
+def test_first_half_stoppage_conditions_on_time_played():
+    prof = _toy_profile()
+    r46, w46 = prof.remaining_share(1, 46.0)
+    assert (prof.s1[prof.scenario_weights(1, 46.0) > 0] >= 1.0).all()
+    assert w46.sum() == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("rho", [0.0, -0.08])
+def test_tv_monte_carlo_matches_tv_analytic(rho):
+    prof = _toy_profile()
+    zs = []
+    for i, (h, a, m, p) in enumerate(TV_STATES):
+        mc = inplay.mc_price_tv(prof, LH, LA, h, a, m, p, N_SIMS, rho=rho, seed=300 + i)
+        ex = inplay.price_tv(prof, LH, LA, h, a, m, p, rho=rho)
+        est = np.r_[mc["1x2"], mc["over"]]
+        se = np.r_[mc["1x2_se"], mc["over_se"]]
+        exact = np.r_[ex["1x2"][0], ex["over"][0]]
+        zs.extend(_compare_mc(est, se, exact, N_SIMS))
+    z = np.array(zs)
+    assert np.abs(z).max() < 4.5 and abs(z.mean()) < 0.6 and 0.4 < (z ** 2).mean() < 1.8
+
+
+def test_fit_recovers_known_intensity_shape():
+    """Simulate goal times from a known shape, fit, and recover the weights."""
+    rng = np.random.default_rng(0)
+    true = _toy_profile()
+    n = 6000
+    sc = rng.choice(len(true.probs), n, p=true.probs)
+    b = true.bounds(true.s1[sc], true.s2[sc])
+    rows, mrows = [], []
+    for i in range(n):
+        lam = 2.6 * true.weights * np.diff(b[i])          # expected goals per bin
+        for k, c in enumerate(rng.poisson(lam)):
+            u = rng.uniform(b[i, k], b[i, k + 1], c)
+            for x in u:
+                end1 = b[i, len(true.edges1)]
+                per, t = (1, x) if x < end1 else (2, 45 + (x - end1))
+                rows.append({"match_id": i, "period": per, "t": t, "event": "goal"})
+        mrows.append({"match_id": i, "end_p1": 45 + true.s1[sc[i]],
+                      "end_p2": 90 + true.s2[sc[i]]})
+    fit = inplay.fit_goal_intensity(pd.DataFrame(mrows), pd.DataFrame(rows))
+    assert fit.total() == pytest.approx(1.0)
+    rel_err = np.abs(fit.weights - true.weights) / true.weights
+    assert rel_err[[0, 1, 2, 4, 5, 6]].max() < 0.08    # regulation bins: lots of exposure
+    assert fit.table.attrs["goals_per_match"] == pytest.approx(2.6, rel=0.03)

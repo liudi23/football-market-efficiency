@@ -24,6 +24,8 @@ python scripts/download_data.py                # football-data.co.uk CSVs -> dat
 python scripts/baseline_real.py                # Stages 1-3 on real data -> reports/baseline_real.md
 python scripts/baseline_real.py --sim          # same pipeline on simulated data
 python scripts/inplay_mc_check.py              # in-play: Monte Carlo vs analytic -> reports/inplay_mc_check.md
+python scripts/download_statsbomb.py           # goal/red-card minutes (StatsBomb open data) -> data/processed/
+python scripts/inplay_intensity.py             # fit time-varying goal rates -> reports/inplay_intensity.md
 ```
 
 ## Layout
@@ -38,8 +40,10 @@ src/sportsq/
   simulate.py      synthetic leagues + markets with injectable inefficiencies
   backtest.py      walk-forward refits, market blend
   staking.py       value-bet selection, shrunk Kelly, bankroll, closing line value
-  inplay.py        in-play 1X2 and over/under prices from score and minute (analytic + Monte Carlo)
-scripts/           sim_study.py, download_data.py, baseline_real.py, inplay_mc_check.py
+  inplay.py        in-play 1X2 and over/under prices from score, minute and stoppage time
+                   (analytic + Monte Carlo; constant or fitted time-varying goal rates)
+scripts/           sim_study.py, download_data.py, baseline_real.py, inplay_mc_check.py,
+                   download_statsbomb.py, inplay_intensity.py
 tests/             unit tests (no lookahead, parameter recovery, scoring rules)
 reports/           generated results
 docs/              methodology, in-play plan
@@ -74,7 +78,7 @@ All of this matches the methodology. See `reports/sim_study.md`.
 - [ ] In-play pricing ([plan](docs/inplay-plan.md)):
   - [x] Step 1: analytic pricer from score and minute (exact in-play Dixon–Coles correction)
   - [x] Step 2: Monte Carlo match-state simulator, checked against Step 1 ([report](reports/inplay_mc_check.md))
-  - [ ] Step 3: time-varying goal rates and stoppage time
+  - [x] Step 3: time-varying goal rates and stoppage time ([report](reports/inplay_intensity.md))
   - [ ] Step 4: score effects
   - [ ] Step 5: red cards
   - [ ] Step 6: evaluation by minute

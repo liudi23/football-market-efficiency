@@ -122,13 +122,69 @@ state. The plan, with the order of steps and success criteria, is in
   - 8 states × 2 rate pairs × 3 values of $\rho$, with 200,000 simulations each, compared
     with the analytic prices in units of Monte Carlo standard error.
   - Each run must pass three checks: max |z| < 4.5, |mean z| < 0.6, and
-    0.4 < mean z² < 1.8.
+    0.4 < mean z² < 1.8. Since Step 3, cells with fewer than 30 expected hits use an
+    exact Poisson count test instead of a z-score.
   - These tolerances were set from 90 runs with other seeds. The z-scores are
     correlated, because outcomes and nested over lines share simulated matches.
   - The checks then passed on 180 further fresh seeds, and still fail if the standard
     errors are off by a factor of 2 (mean z² 4.0 or 0.25).
   - **Negative control:** simulating without the weights while comparing against
     $\rho = -0.15$ prices fails with max |z| above 100.
+
+### Step 3: time-varying goal rates and stoppage time (done)
+
+- **Data:** StatsBomb open data, 1,517 matches from the complete 2015/16 Premier League,
+  La Liga, Serie A and Ligue 1 seasons, with 3,997 goals
+  (`scripts/download_statsbomb.py`).
+- **Clock:** a state is (period, minute) on the StatsBomb clock.
+  - First-half stoppage is minute > 45 in period 1; the second half restarts at 45.
+  - Internally, both halves are laid end to end on a played-time axis
+    $u \in [0, 90 + s_1 + s_2]$.
+- **Intensity:** piecewise constant, in 15-minute bins plus one stoppage bin per half.
+  - Each team's rate in bin $b$ is $\lambda_\text{team} w_b$.
+  - The weights are normalised so that the expected integrated intensity over a match is 1.
+    So $\lambda$ stays the expected full-match goals from Dixon–Coles, which is fitted on
+    full-time scores including stoppage goals.
+  - Per-bin rates are maximum-likelihood estimates (goals ÷ exposure minutes), with exact
+    Poisson CIs.
+- **Stoppage time:**
+  - The lengths $(s_1, s_2)$ follow their empirical joint distribution, as 131 scenarios
+    at 0.5-minute resolution (means 1.3 and 3.8 minutes).
+  - During stoppage, scenarios are conditioned on the stoppage already played.
+  - Prices are the scenario mixture.
+- **Dixon–Coles correction:** both teams share one shape, so, given the final counts,
+  goal times are i.i.d. with density proportional to the intensity.
+  - The Step 1 derivation then holds, with "share of the match played" replaced by
+    "share of the integrated intensity used".
+  - Scenario grids are mixed before normalising, so the scenario weights are updated by
+    the $\tau$ likelihood, exactly as in the Monte Carlo estimator.
+- **Findings** (`reports/inplay_intensity.md`):
+  - The rate rises from 0.82× the match average (minutes 0–15; 95% CI 0.75–0.90) to
+    1.14× (75–90; 1.06–1.23), and about 1.23–1.25× in stoppage time.
+  - Home and away goals share the shape: χ² homogeneity test p = 0.57.
+  - **Out of sample:** in 5-fold cross-validated log-likelihood of goal times, 15-minute
+    bins beat a constant rate by +0.012 per match (95% CI +0.003 to +0.022).
+  - 5-minute bins are *worse* than 15-minute bins (−0.007, CI −0.013 to −0.001), because
+    they overfit. So 15-minute bins are the default.
+  - **Price impact:** at 0–0 after 80 minutes the draw falls from 80% to 72%. At 0–0
+    after 90 minutes, Step 1 treats the match as over, while Step 3 still gives a 9%
+    chance of a stoppage-time goal.
+- **Verification** (`tests/test_inplay.py`):
+  - A constant profile reproduces Step 1 exactly.
+  - At kick-off, prices equal the pre-match prices exactly when stoppage time is fixed
+    at its mean, and are within 0.002 when it's random.
+  - The fit recovers a known shape from simulated goal times (within 2–5% across seeds).
+  - Monte Carlo pricing agrees with the analytic mixture: 0 failures in 220 fresh-seed
+    runs, average mean z² of 0.99.
+- **Test fix found while doing this:**
+  - Very rare events (expected only a handful of times in 200,000 simulations) made the
+    z-score checks unreliable.
+  - Cells with fewer than 30 expected hits are now checked with an exact Poisson count
+    test instead, in both the Step 2 and Step 3 tests.
+- **Caveats:**
+  - One season, inside the development split.
+  - The late rise partly reflects score effects (trailing teams attack), which Step 4
+    will separate out.
 
 ## Pre-registered success criteria (holdout)
 

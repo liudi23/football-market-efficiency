@@ -1,6 +1,6 @@
 # In-play extension: plan
 
-Status: Steps 1–2 done (20 Nov 2026); Steps 3–6 to do. Written 20 Nov 2026.
+Status: Steps 1–3 done (20 Nov 2026); Steps 4–6 to do. Written 20 Nov 2026.
 
 ## Context (for picking this up in a new conversation)
 
@@ -54,11 +54,15 @@ Use the terms "match-state simulator" or "in-play pricing model", not "digital t
   analytic prices within the expected Monte Carlo error. Use enough simulations that
   the tolerance is meaningful, and fix the seed.
 
-### Step 3 — Time-varying goal rates
+### Step 3 — Time-varying goal rates ✅ done
 
 - Goal intensity rises through the match. Fit a piecewise-constant or smooth
   intensity λ(t) from goal-minute data.
 - Handle stoppage time: decide how minutes 45+ and 90+ are represented, and say so.
+- **Done:** 15-minute bins plus one stoppage bin per half, chosen by cross-validation
+  (5-minute bins overfit). States use (period, minute) on the StatsBomb clock.
+  Stoppage length is random (empirical joint distribution) and is conditioned on the
+  time already played. See `reports/inplay_intensity.md` and the methodology.
 
 ### Step 4 — Score effects
 
@@ -86,12 +90,32 @@ Use the terms "match-state simulator" or "in-play pricing model", not "digital t
 ## Data
 
 - football-data.co.uk has **no goal or card minutes**.
-- Options:
-  - **StatsBomb open data** (github.com/statsbomb/open-data): free event data with goal
-    and card minutes, for a subset of competitions.
-  - Other free goal-timing sources: check coverage and licence before use.
-- Download from my own network; the Claude workspace can't reach these sites.
-- Keep raw data out of git (`data/raw/` is already ignored).
+- **StatsBomb open data, downloaded 20 Nov 2026:**
+  - Run `python scripts/download_statsbomb.py`. It writes two files to `data/processed/`
+    (gitignored): `statsbomb_matches.csv` and `statsbomb_events.csv`. It keeps only goals,
+    red cards and half lengths, and never stores the raw event files.
+  - **Coverage:** the only complete league seasons are the 2015/16 Premier League,
+    La Liga, Serie A and Ligue 1 (1,517 matches). Other seasons in the open data cover
+    one club (mostly Barcelona) or a tournament, which would bias goal timing, so
+    they are excluded by default.
+  - **Contents:** 3,997 goals and 413 red cards.
+  - **Checks:**
+    - Goal events reproduce the final score in all 1,517 matches.
+    - The Premier League has 59 red cards, matching the published season total.
+  - **Half lengths, including stoppage time:** first half mean 46.3 minutes (max
+    54.3); second half ends at minute 93.8 on average (max 101.2).
+  - **Clock caveat:** StatsBomb restarts the second half at minute 45, so always use
+    `period` with `minute`.
+- **Limits and what they mean for Steps 3–6:**
+  - This is one season, inside the development split. It is enough for the shape of
+    the goal intensity λ(t) (Step 3) and a first estimate of score effects (Step 4).
+  - Red cards (Step 5) will be noisy.
+  - It **cannot** support the validation/holdout evaluation in Step 6 as planned.
+  - For later seasons, use Understat shot data (goal minutes for the top-5 leagues
+    since 2014/15, via the `soccerdata` package). It has no red cards, and must be
+    downloaded from my own network.
+- Keep raw data out of git (`data/raw/` and `data/processed/` are ignored).
+- Attribute StatsBomb when publishing results built on this data.
 
 ## Files to add
 

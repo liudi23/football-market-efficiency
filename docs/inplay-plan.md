@@ -1,6 +1,6 @@
 # In-play extension: plan
 
-Status: Step 1 done (20 Nov 2026); Steps 2–6 to do. Written 20 Nov 2026.
+Status: Steps 1–2 done (20 Nov 2026); Steps 3–6 to do. Written 20 Nov 2026.
 
 ## Context (for picking this up in a new conversation)
 
@@ -47,7 +47,7 @@ Use the terms "match-state simulator" or "in-play pricing model", not "digital t
   over/under N.5 prices from that grid.
 - Reuse the existing score-grid code in `dixon_coles.py`.
 
-### Step 2 — Monte Carlo simulator that reproduces Step 1 (about half a day)
+### Step 2 — Monte Carlo simulator that reproduces Step 1 (about half a day) ✅ done
 
 - Simulate goal arrival times for the rest of the match as a Poisson process.
 - Unit test: with constant rates and no state effects, Monte Carlo prices match the

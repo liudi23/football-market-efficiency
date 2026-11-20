@@ -103,6 +103,33 @@ state. The plan, with the order of steps and success criteria, is in
   - The score doesn't change behaviour (Step 4).
   - Red cards are ignored (Step 5).
 
+### Step 2: Monte Carlo match-state simulator (done)
+
+- **Engine:** goals for the rest of the match are simulated as event times of a point
+  process from the current state, using thinning (Lewis & Shedler 1979).
+  - Candidate events arrive at a constant bound rate.
+  - Each is accepted as a home goal, an away goal or rejected, according to the
+    current rates.
+  - Rates come from a function of time and match state, which is where Steps 3–5
+    plug in. With constant rates the bound equals the total rate, so nothing is
+    rejected.
+- **Dixon–Coles correction:** reproduced by self-normalised importance weighting. Each
+  simulated match is weighted by $\tau$(final score), with full-match rates, which is
+  exactly the Step 1 posterior.
+  - Standard errors use the delta method.
+  - The effective sample size is reported.
+- **Verification** (`tests/test_inplay.py`, `reports/inplay_mc_check.md`):
+  - 8 states × 2 rate pairs × 3 values of $\rho$, with 200,000 simulations each, compared
+    with the analytic prices in units of Monte Carlo standard error.
+  - Each run must pass three checks: max |z| < 4.5, |mean z| < 0.6, and
+    0.4 < mean z² < 1.8.
+  - These tolerances were set from 90 runs with other seeds. The z-scores are
+    correlated, because outcomes and nested over lines share simulated matches.
+  - The checks then passed on 180 further fresh seeds, and still fail if the standard
+    errors are off by a factor of 2 (mean z² 4.0 or 0.25).
+  - **Negative control:** simulating without the weights while comparing against
+    $\rho = -0.15$ prices fails with max |z| above 100.
+
 ## Pre-registered success criteria (holdout)
 
 - **Forecast:** the blend's RPS is below the opening market's, with a 95% CI below 0.
@@ -137,5 +164,6 @@ CLV against Pinnacle and exchange prices is the honest test.
 - Koopman & Lit (2015). A dynamic bivariate Poisson model for the English Premier League. *JRSS A* 178(1); (2019) score-driven models, *IJF* 35(2).
 - Walsh & Joshi (2024). Machine learning for sports betting: accuracy or calibration? *MLWA* 16.
 - Wheatcroft (2020). A profitable model for predicting the over/under market in football. *IJF* 36(3); (2021) Forecasting football matches by predicting match statistics. *JSA* 7(2).
+- Lewis & Shedler (1979). Simulation of nonhomogeneous Poisson processes by thinning. *Naval Research Logistics Quarterly* 26(3).
 - Dixon & Robinson (1998). A birth process model for association football matches. *JRSS D* 47(3).
 - Wunderlich & Memmert (2018). The Betting Odds Rating System. *PLOS ONE* 13(6); (2020) Are betting returns a useful measure of accuracy? *IJF* 36(2).

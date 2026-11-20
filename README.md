@@ -23,6 +23,7 @@ python scripts/sim_study.py --seeds 5          # Stage 0: injection-recovery on 
 python scripts/download_data.py                # football-data.co.uk CSVs -> data/raw/
 python scripts/baseline_real.py                # Stages 1-3 on real data -> reports/baseline_real.md
 python scripts/baseline_real.py --sim          # same pipeline on simulated data
+python scripts/inplay_mc_check.py              # in-play: Monte Carlo vs analytic -> reports/inplay_mc_check.md
 ```
 
 ## Layout
@@ -37,8 +38,8 @@ src/sportsq/
   simulate.py      synthetic leagues + markets with injectable inefficiencies
   backtest.py      walk-forward refits, market blend
   staking.py       value-bet selection, shrunk Kelly, bankroll, closing line value
-  inplay.py        in-play 1X2 and over/under prices from score and minute (Step 1: analytic)
-scripts/           sim_study.py, download_data.py, baseline_real.py
+  inplay.py        in-play 1X2 and over/under prices from score and minute (analytic + Monte Carlo)
+scripts/           sim_study.py, download_data.py, baseline_real.py, inplay_mc_check.py
 tests/             unit tests (no lookahead, parameter recovery, scoring rules)
 reports/           generated results
 docs/              methodology, in-play plan
@@ -72,7 +73,7 @@ All of this matches the methodology. See `reports/sim_study.md`.
 - [ ] Locked-holdout evaluation and write-up
 - [ ] In-play pricing ([plan](docs/inplay-plan.md)):
   - [x] Step 1: analytic pricer from score and minute (exact in-play Dixon–Coles correction)
-  - [ ] Step 2: Monte Carlo match-state simulator, checked against Step 1
+  - [x] Step 2: Monte Carlo match-state simulator, checked against Step 1 ([report](reports/inplay_mc_check.md))
   - [ ] Step 3: time-varying goal rates and stoppage time
   - [ ] Step 4: score effects
   - [ ] Step 5: red cards

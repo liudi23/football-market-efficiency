@@ -132,3 +132,101 @@ def price_path(lam_h, lam_a, goals, minutes=range(0, 91, 5), rho=0.0,
                 hg, ag, minutes, rho, lines)
     out.update({"minute": minutes, "home_goals": hg, "away_goals": ag})
     return out
+
+
+# ---------------------------------------------------------------------------
+# Step 2: Monte Carlo match-state simulator
+# ---------------------------------------------------------------------------
+"""
+Goals for the rest of the match are simulated as event times of a point
+process, starting from the current state (minute, score). The engine uses
+thinning (Lewis & Shedler 1979): candidate events arrive at a constant bound
+rate, and each is accepted as a home goal, an away goal, or rejected,
+according to the current rates. Rates may depend on time and match state
+through `rate_fn`, which is what Steps 3-5 plug in. With constant rates
+(Step 2) the bound equals the total rate and nothing is rejected.
+
+The Dixon-Coles correction is reproduced by self-normalised importance
+weighting: each simulated match gets weight tau(final_h, final_a) with the
+full-match rates, which is exactly the posterior derived for Step 1.
+"""
+
+
+def constant_rates(lam_h, lam_a, match_minutes=MATCH_MINUTES):
+    """rate_fn for Step 2: per-minute rates that ignore time and state."""
+    rh, ra = lam_h / match_minutes, lam_a / match_minutes
+
+    def rate_fn(t, hg, ag):
+        return np.full(t.shape, rh), np.full(t.shape, ra)
+
+    return rate_fn, rh + ra
+
+
+def dc_tau(x, y, lam_h, lam_a, rho) -> np.ndarray:
+    """Dixon-Coles low-score factor for final scores (x, y)."""
+    x, y = np.asarray(x), np.asarray(y)
+    t = np.ones(np.broadcast(x, y).shape)
+    t = np.where((x == 0) & (y == 0), 1 - lam_h * lam_a * rho, t)
+    t = np.where((x == 0) & (y == 1), 1 + lam_h * rho, t)
+    t = np.where((x == 1) & (y == 0), 1 + lam_a * rho, t)
+    t = np.where((x == 1) & (y == 1), 1 - rho, t)
+    return t
+
+
+def simulate_remaining(lam_h, lam_a, home_goals=0, away_goals=0, minute=0.0,
+                       n_sims=100_000, rho=0.0, seed=None, rate_fn=None,
+                       rate_bound=None, match_minutes=MATCH_MINUTES) -> dict:
+    """Simulate the rest of one match `n_sims` times from the given state.
+
+    Returns {"home": final home goals, "away": final away goals,
+             "weights": importance weights (all 1 when rho = 0)}.
+    `rate_fn(t, hg, ag) -> (rate_home, rate_away)` gives per-minute rates for
+    arrays of current times and scores; `rate_bound` must be >= their sum.
+    """
+    rng = np.random.default_rng(seed)
+    if rate_fn is None:
+        rate_fn, rate_bound = constant_rates(lam_h, lam_a, match_minutes)
+    elif rate_bound is None:
+        raise ValueError("rate_bound is required with a custom rate_fn")
+    t = np.full(n_sims, float(np.clip(minute, 0, match_minutes)))
+    hg = np.full(n_sims, int(home_goals))
+    ag = np.full(n_sims, int(away_goals))
+    live = np.flatnonzero(t < match_minutes) if rate_bound > 0 else np.array([], int)
+    while live.size:
+        t[live] += rng.exponential(1.0 / rate_bound, live.size)
+        live = live[t[live] < match_minutes]
+        if not live.size:
+            break
+        rh, ra = rate_fn(t[live], hg[live], ag[live])
+        if np.any(rh + ra > rate_bound * (1 + 1e-12)):
+            raise ValueError("rate_fn exceeded rate_bound; thinning would be biased")
+        u = rng.random(live.size) * rate_bound
+        hg[live[u < rh]] += 1
+        ag[live[(u >= rh) & (u < rh + ra)]] += 1
+    w = dc_tau(hg, ag, lam_h, lam_a, rho) if rho != 0.0 else np.ones(n_sims)
+    return {"home": hg, "away": ag, "weights": w}
+
+
+def _weighted_prob(indicator, w):
+    """Self-normalised estimate of P(event) and its delta-method standard error."""
+    p = (w * indicator).sum() / w.sum()
+    se = np.sqrt((w ** 2 * (indicator - p) ** 2).sum()) / w.sum()
+    return p, se
+
+
+def mc_price(lam_h, lam_a, home_goals=0, away_goals=0, minute=0.0, n_sims=100_000,
+             rho=0.0, lines=DEFAULT_LINES, seed=None, **sim_kwargs) -> dict:
+    """Monte Carlo prices for one match state, with standard errors.
+
+    Returns {"1x2", "1x2_se", "over", "over_se", "lines", "ess"} where ess is
+    the effective sample size (n_sims when unweighted).
+    """
+    sim = simulate_remaining(lam_h, lam_a, home_goals, away_goals, minute, n_sims,
+                             rho, seed, **sim_kwargs)
+    h, a, w = sim["home"], sim["away"], sim["weights"]
+    events = [h > a, h == a, h < a] + [(h + a) > line for line in lines]
+    est = np.array([_weighted_prob(e.astype(float), w) for e in events])
+    k = 3
+    return {"1x2": est[:k, 0], "1x2_se": est[:k, 1],
+            "over": est[k:, 0], "over_se": est[k:, 1], "lines": tuple(lines),
+            "ess": w.sum() ** 2 / (w ** 2).sum()}

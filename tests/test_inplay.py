@@ -1,6 +1,6 @@
-"""Step 1 tests for the analytic in-play pricer.
+"""Tests for in-play pricing.
 
-Monte Carlo agreement tests are added in Step 2.
+Step 1: analytic pricer. Step 2: Monte Carlo simulator agrees with it.
 """
 import numpy as np
 import pytest
@@ -92,3 +92,82 @@ def test_price_path_and_model_wrapper():
     path = inplay.price_path(lh[0], la[0], [(23, "H"), (67, "A")], rho=model.rho_)
     assert path["home_goals"][-1] == 1 and path["away_goals"][-1] == 1
     assert np.allclose(path["1x2"][-1], [0, 1, 0])
+
+
+# ---------------------------------------------------------------------------
+# Step 2: Monte Carlo simulator reproduces the analytic prices
+# ---------------------------------------------------------------------------
+N_SIMS = 200_000
+STATES = [(0, 0, 0), (1, 0, 30), (0, 1, 60), (1, 1, 75), (2, 0, 45), (0, 0, 89),
+          (0, 0, 60), (3, 2, 20)]
+RATES = [(1.5, 1.1), (2.6, 0.6)]
+
+
+def _z_scores(rho, seed0=100, n_sims=N_SIMS, weighted=True):
+    """z = (MC - analytic) / MC standard error, over all states, rates and markets."""
+    zs = []
+    for i, (h, a, m) in enumerate(STATES):
+        for lh, la in RATES:
+            mc = inplay.mc_price(lh, la, h, a, m, n_sims, rho=rho if weighted else 0.0,
+                                 seed=seed0 + i)
+            ex = inplay.price(lh, la, h, a, m, rho=rho)
+            est = np.r_[mc["1x2"], mc["over"]]
+            se = np.r_[mc["1x2_se"], mc["over_se"]]
+            exact = np.r_[ex["1x2"][0], ex["over"][0]]
+            ok = se > 0
+            # zero-variance cells: either settled, or so rare that seeing none is expected
+            assert (np.abs(est[~ok] - exact[~ok]) < 1e-9).all() or \
+                (exact[~ok] * n_sims < 5).all()
+            zs.extend((est[ok] - exact[ok]) / se[ok])
+    return np.array(zs)
+
+
+@pytest.mark.parametrize("rho", [0.0, -0.08, 0.1])
+def test_monte_carlo_matches_analytic(rho):
+    z = _z_scores(rho)
+    # Tolerances were set from 90 runs with other seeds (max |z| 3.4, mean z in
+    # [-0.39, 0.23], mean z^2 in [0.57, 1.41]). z-scores are correlated: the 1X2
+    # outcomes and nested over lines share the same simulated matches, so the
+    # pooled statistics vary more than for independent z's. These bounds still
+    # catch a factor-2 error in the standard errors (mean z^2 of 4 or 0.25) and
+    # any bias of the size in the negative control below.
+    assert len(z) > 80
+    assert np.abs(z).max() < 4.5              # no single price is off
+    assert abs(z.mean()) < 0.6                # no systematic bias
+    assert 0.4 < (z ** 2).mean() < 1.8        # standard errors are honest
+
+
+def test_negative_control_missing_dc_weights_is_detected():
+    """Simulating plain Poisson but comparing with rho != 0 prices must fail loudly."""
+    z = _z_scores(-0.15, weighted=False)
+    assert np.abs(z).max() > 6
+
+
+def test_mc_minute_zero_equals_prematch_and_full_time_is_settled():
+    mc = inplay.mc_price(LH, LA, 0, 0, 0, N_SIMS, rho=RHO, seed=5)
+    pre = grid_to_1x2(score_grid(LH, LA, RHO))[0]
+    assert (np.abs(mc["1x2"] - pre) < 4 * mc["1x2_se"]).all()
+    done = inplay.mc_price(LH, LA, 2, 1, 90, 1000, rho=RHO, seed=5)
+    assert np.allclose(done["1x2"], [1, 0, 0]) and np.allclose(done["1x2_se"], 0)
+
+
+def test_thinning_with_loose_bound_gives_same_answer():
+    """Custom rate_fn with a bound 3x too high: rejections happen, answer unchanged."""
+    rate_fn, bound = inplay.constant_rates(LH, LA)
+    mc = inplay.mc_price(LH, LA, 1, 0, 30, N_SIMS, seed=9, rate_fn=rate_fn,
+                         rate_bound=3 * bound)
+    ex = inplay.price(LH, LA, 1, 0, 30)["1x2"][0]
+    assert (np.abs(mc["1x2"] - ex) < 4 * mc["1x2_se"]).all()
+
+
+def test_rate_bound_violation_raises():
+    rate_fn, bound = inplay.constant_rates(LH, LA)
+    with pytest.raises(ValueError):
+        inplay.simulate_remaining(LH, LA, n_sims=100, seed=0, rate_fn=rate_fn,
+                                  rate_bound=bound / 2)
+
+
+def test_simulation_is_reproducible_with_seed():
+    a = inplay.simulate_remaining(LH, LA, 0, 0, 10, 1000, seed=42)
+    b = inplay.simulate_remaining(LH, LA, 0, 0, 10, 1000, seed=42)
+    assert (a["home"] == b["home"]).all() and (a["away"] == b["away"]).all()

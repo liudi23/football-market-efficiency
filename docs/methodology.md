@@ -186,6 +186,62 @@ state. The plan, with the order of steps and success criteria, is in
   - The late rise partly reflects score effects (trailing teams attack), which Step 4
     will separate out.
 
+### Step 4: score effects (done)
+
+- **Model:** each team's rate is
+  $c\,\lambda_\text{team}\,w_b(u)\,m(d)$, where:
+  - $m(d)$ is a multiplier for the goal difference from that team's point of view,
+    with states ≤−2, −1, 0, +1, ≥+2 and $m(0) = 1$ (Dixon & Robinson 1998);
+  - $w_b$ is the time shape net of score effects;
+  - $c$ is a per-match calibration so that pre-match expected goals still equal the
+    Dixon–Coles $\lambda$s.
+- **Estimation:** full Poisson-process likelihood on segments of constant (time bin,
+  score), with team attack/defence and home advantage.
+  - It's valid even though the score depends on earlier goals, because the intensity
+    is predictable.
+  - **Two pitfalls, both demonstrated on simulated leagues in the tests:**
+    - Leaving out team strength flips the sign: leaders appear to score *more*,
+      because strong teams lead.
+    - Conditioning on each team's goal total in the match is invalid, because the
+      states are created by the team's own goals. It overstated the effects about
+      ten-fold (trailing by 2+: 9.6×).
+- **Tactical vs predictive:**
+  - With in-sample team strengths, the multipliers measure the *tactical* effect:
+    ≤−2: 1.17 (1.03–1.33); −1: 1.09; +1: 0.99; ≥+2: 0.93. LR test p = 0.02.
+  - But tactical multipliers make held-out goal predictions *worse* (−0.0055 per match,
+    CI −0.010 to −0.000). A live pricer only has an estimated strength, and the score
+    is evidence about that estimate's error: a leader is probably stronger than thought.
+  - **Predictive** multipliers, fitted on out-of-fold strength offsets: ≤−2: 1.16
+    (1.02–1.31); −1: 1.08; +1: 1.03; ≥+2: 1.03.
+  - Out of sample they are neutral (−0.0005 per match, CI −0.004 to +0.003).
+  - The predictive version is the one to price with. A simulation test confirms the
+    learning effect: predictive multipliers for leaders sit 4–12% above the tactical
+    ones.
+  - The time shape barely changes when score effects are removed: the late rise in
+    goals is a time effect.
+- **Pricing:**
+  - Rates now depend on the score, so remaining goals are not Poisson. Exact prices
+    come from the continuous-time Markov chain over scores: a matrix exponential per
+    time bin per stoppage scenario.
+  - Calibration uses the mean-stoppage profile, which is ~100× faster and within about
+    1e-5 in expected goals.
+  - The Dixon–Coles $\tau$ is kept as an optional final-score reweighting. Its Step 1
+    justification no longer holds, so $\rho = 0$ is recommended with score effects.
+- **Price impact** with predictive multipliers is small: at most about 1–1.5 points on
+  1X2 in the examples (`reports/inplay_score_effects.md`).
+- **Verification:**
+  - With no effects, the pricer reproduces Step 3 to 1e-6.
+  - Calibration preserves expected goals.
+  - Monte Carlo matches the Markov chain: 0 failures in 50 fresh-seed runs.
+  - The fit recovers known effects on simulated leagues (max |z| below 3 across 6 seeds).
+- **Caveats:**
+  - One season.
+  - Effects are the same for home and away, and constant over time.
+  - Red cards are not yet separated out (Step 5).
+  - A sharper strength offset would be the pre-match market odds (Pinnacle 2015/16 is
+    in football-data). That's a natural refinement.
+  - Step 6 decides whether score effects earn their place.
+
 ## Pre-registered success criteria (holdout)
 
 - **Forecast:** the blend's RPS is below the opening market's, with a 95% CI below 0.

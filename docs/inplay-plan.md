@@ -1,6 +1,6 @@
 # In-play extension: plan
 
-Status: Steps 1–3 done (20 Nov 2026); Steps 4–6 to do. Written 20 Nov 2026.
+Status: Steps 1–4 done (20 Nov 2026); Steps 5–6 to do. Written 20 Nov 2026.
 
 ## Context (for picking this up in a new conversation)
 
@@ -64,11 +64,18 @@ Use the terms "match-state simulator" or "in-play pricing model", not "digital t
   Stoppage length is random (empirical joint distribution) and is conditioned on the
   time already played. See `reports/inplay_intensity.md` and the methodology.
 
-### Step 4 — Score effects
+### Step 4 — Score effects ✅ done
 
 - Scale each team's rate by the score difference, e.g. the trailing team's rate
   rises and the leading team's falls, following Dixon & Robinson (1998).
 - Estimate the multipliers from data and report their uncertainty.
+- **Done:** full-likelihood fit with team strengths; tactical vs predictive multipliers
+  (price with predictive, i.e. relative to an out-of-fold strength estimate). Effects
+  are small: trailing teams score ~8–16% more; leaders ~unchanged once learning about
+  strength is included. Neutral out of sample on goal rates; Step 6 decides. See
+  `reports/inplay_score_effects.md`.
+- **Possible refinement:** use pre-match Pinnacle odds (football-data 2015/16) as the
+  strength offset instead of cross-fitted team strengths.
 
 ### Step 5 — Red cards
 
@@ -114,7 +121,34 @@ Use the terms "match-state simulator" or "in-play pricing model", not "digital t
   - For later seasons, use Understat shot data (goal minutes for the top-5 leagues
     since 2014/15, via the `soccerdata` package). It has no red cards, and must be
     downloaded from my own network.
-- Keep raw data out of git (`data/raw/` and `data/processed/` are ignored).
+- **Betfair Exchange historical data (BASIC, free), downloaded 20 Nov 2026:**
+  - **Coverage:** August 2024 – late January 2025, about 974,000 market files across
+    all football worldwide (4 GB tar, `data/BASIC/`, gitignored).
+  - **Format:** one bz2 stream file per market, with last-traded prices at about
+    1-minute snapshots plus market-definition updates.
+  - **Pipeline:**
+    - `scripts/betfair_index.py`: resumable index of match-odds and over/under 0.5–4.5
+      markets.
+    - `scripts/betfair_epl.py`: matches Premier League fixtures (219/229; the archive
+      ends before the last January weekend) and rebuilds each match timeline from the
+      markets alone. The scorer side comes from the match-odds move, and is fitted to
+      the known final score.
+  - **Checks against football-data:**
+    - Goal count right in 219/219 matches.
+    - Exact final score from price moves alone in 89.5%.
+    - Half-time score (which tests goal timing) in 96.3%.
+  - **Output:** `data/processed/betfair_epl_2425_inplay.csv`, about 22,000
+    match-minutes with the score and market 1X2 / over-2.5 probabilities.
+  - **Pitfalls found:**
+    - Every goal (and VAR checks) suspends *all* markets, so the deciding goal is the
+      *last* suspension before a market closes.
+    - Some archive files are event-level bundles of every market, so the parser must
+      filter by market id.
+    - Folder dates are not match dates.
+  - **Use in Step 6:** compare the in-play pricer with the market minute by minute,
+    for the first half of 2024/25. A full season needs February–May 2025 as well.
+- Keep raw data out of git (`data/raw/`, `data/processed/`, `data/BASIC/` and `*.tar`
+  are ignored).
 - Attribute StatsBomb when publishing results built on this data.
 
 ## Files to add

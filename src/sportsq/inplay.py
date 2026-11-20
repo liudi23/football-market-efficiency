@@ -183,11 +183,12 @@ def dc_tau(x, y, lam_h, lam_a, rho) -> np.ndarray:
     return t
 
 
-def _thinning(start, end, hg, ag, rate_fn, rate_bound, rng):
+def _thinning(start, end, hg, ag, rate_fn, rate_bound, rng, log=None):
     """Simulate goals on [start, end) per path by thinning; updates hg, ag in place.
 
     `rate_fn(t, hg, ag, idx) -> (rate_home, rate_away)` per minute, evaluated for
-    the live paths `idx`; `rate_bound` must be >= their sum everywhere.
+    the live paths `idx`; `rate_bound` must be >= their sum everywhere. If `log`
+    is a list, (path index, time, "H"/"A") is appended for every goal.
     """
     t = np.asarray(start, float).copy()
     end = np.broadcast_to(np.asarray(end, float), t.shape)
@@ -201,8 +202,12 @@ def _thinning(start, end, hg, ag, rate_fn, rate_bound, rng):
         if np.any(rh + ra > rate_bound * (1 + 1e-12)):
             raise ValueError("rate_fn exceeded rate_bound; thinning would be biased")
         u = rng.random(live.size) * rate_bound
-        hg[live[u < rh]] += 1
-        ag[live[(u >= rh) & (u < rh + ra)]] += 1
+        home, away = live[u < rh], live[(u >= rh) & (u < rh + ra)]
+        hg[home] += 1
+        ag[away] += 1
+        if log is not None:
+            log.extend((int(i), float(t[i]), "H") for i in home)
+            log.extend((int(i), float(t[i]), "A") for i in away)
     return hg, ag
 
 
@@ -528,3 +533,417 @@ def load_statsbomb(processed_dir="data/processed"):
     d = Path(processed_dir)
     return (pd.read_csv(d / "statsbomb_matches.csv"),
             pd.read_csv(d / "statsbomb_events.csv"))
+
+
+# ---------------------------------------------------------------------------
+# Step 4: score effects
+# ---------------------------------------------------------------------------
+"""
+A team's scoring rate depends on the current goal difference from its own
+point of view (Dixon & Robinson 1998). Per-minute rate for the home team:
+
+    c_h * lambda_h * w_b(u) * m(hg - ag),     and for away: c_a * lambda_a * w_b(u) * m(ag - hg)
+
+- m(d) are multipliers for goal-difference states d in {<=-2, -1, 0, +1, >=+2},
+  with m(0) = 1 (level score is the reference).
+- w_b is the time shape *net of* score effects, estimated jointly with m.
+- c_h, c_a are per-match calibration constants chosen so that the expected
+  full-match goals still equal the pre-match lambda_h, lambda_a.
+
+Estimation: full Poisson-process likelihood on segments of constant
+(time bin, score), with a log-exposure offset and log-rate
+
+    mu + home + attack[team] - defence[opponent] + gamma[bin] + beta[state].
+
+Team attack/defence (per team, i.e. per league-season here) control for the
+fact that stronger teams both lead more often and score more. The full
+likelihood is valid even though the state depends on earlier goals (counting
+process with predictable intensity). Do NOT condition on each team's total
+goals in the match: the states are created by the team's own goals, so the
+segment exposures depend on the outcome. For example, a team that scored
+exactly once has its goal in the pre-goal state and, by construction, no
+goals after it while leading. That conditional likelihood is invalid and
+grossly overstates score effects (kept as method="conditional" only to
+demonstrate the bias; see reports/inplay_score_effects.md).
+
+Tactical vs predictive effects: with team strengths estimated in-sample (from
+the same matches), the multipliers measure the *tactical* effect of the score
+(leaders sit back, trailers push). A live pricer only has a pre-match
+*estimate* of strength, and the score is also evidence about that estimate's
+error (a team that leads is probably stronger than estimated). For pricing,
+the multipliers must be measured relative to the strength estimate actually
+used: method="predictive" cross-fits team strengths on other matches
+(out-of-fold) and fits time and score effects on top of those offsets. In the
+2015/16 data the two differ for leading teams (tactical 0.93-0.99,
+predictive ~1.03); trailing teams score more under both.
+
+Pricing: rates now depend on the score, so remaining goals are no longer
+Poisson. The exact distribution comes from the continuous-time Markov chain
+over scores (hg, ag): within each time bin the generator is constant, so the
+forward equation is solved with a matrix exponential per bin, per stoppage
+scenario. Goals per team are truncated at current + max_remaining (the last
+level is absorbing; the mass that reaches it is negligible).
+
+Dixon-Coles correction: with score effects goal times are no longer i.i.d.
+given the counts, so the Step 1 derivation does not apply. tau is kept as an
+optional reweighting of final scores (same in the analytic and Monte Carlo
+pricers), but because score effects already change the low-score structure,
+rho = 0 is the recommended setting here; Step 6 decides empirically.
+"""
+
+from scipy.optimize import minimize as _minimize  # noqa: E402
+from scipy.sparse import csr_matrix as _csr  # noqa: E402
+from scipy.sparse.linalg import expm_multiply as _expm_multiply  # noqa: E402
+
+DIFF_STATES = (-2, -1, 0, 1, 2)  # goal difference from the scoring team's view, clipped
+
+
+@dataclass
+class ScoreEffects:
+    """Score-state multipliers and the time shape estimated jointly with them."""
+    multipliers: np.ndarray            # m(d) for d in DIFF_STATES, m(0) = 1
+    profile: GoalIntensity             # time shape net of score effects
+    se_log: np.ndarray | None = None   # standard errors of log m (same order)
+    table: pd.DataFrame | None = field(default=None, repr=False)
+
+    @classmethod
+    def none(cls, profile: GoalIntensity):
+        return cls(np.ones(len(DIFF_STATES)), profile)
+
+    def m(self, d):
+        return self.multipliers[np.clip(np.asarray(d), -2, 2) + 2]
+
+    def to_dict(self):
+        return {"multipliers": self.multipliers.tolist(), "profile": self.profile.to_dict()}
+
+    @classmethod
+    def from_dict(cls, d):
+        return cls(np.asarray(d["multipliers"]), GoalIntensity.from_dict(d["profile"]))
+
+
+def build_segments(matches: pd.DataFrame, events: pd.DataFrame,
+                   edges1=(0, 15, 30, 45), edges2=(45, 60, 75, 90)) -> pd.DataFrame:
+    """Split each match into intervals of constant (time bin, score).
+
+    One row per (match, interval, team) with: `match_id`, `team`, `opponent`,
+    `is_home`, `bin`, `diff` (goal difference from that team's view, clipped to
+    [-2, 2]), `length` in minutes, and `goals` scored by that team at the end of
+    the interval. Goals use the score *before* the goal. Red cards are ignored
+    here (Step 5).
+    """
+    geo = GoalIntensity(edges1, edges2, np.ones(len(edges1) + len(edges2)), [0], [0], [1])
+    gl = events[events.event == "goal"]
+    by_match = {k: v for k, v in gl.groupby("match_id")}
+    rows = []
+    for mt in matches.itertuples(index=False):
+        s1, s2 = max(mt.end_p1 - 45, 0.0), max(mt.end_p2 - 90, 0.0)
+        b = geo.bounds([s1], [s2])[0]
+        end1 = b[len(geo.edges1)]
+        g = by_match.get(mt.match_id)
+        times, sides = [], []
+        if g is not None:
+            for r in g.itertuples(index=False):
+                u = r.t if r.period == 1 else end1 + (r.t - 45)
+                times.append(min(max(u, 0.0), b[-1] - 1e-9))
+                sides.append(r.side)
+        order = np.argsort(times, kind="stable")
+        times, sides = np.asarray(times, float)[order], np.asarray(sides)[order]
+        cuts = np.unique(np.concatenate([b, times]))
+        hg = ag = 0
+        gi = 0
+        for a, z in zip(cuts[:-1], cuts[1:]):
+            k = min(int((a >= b[1:-1]).sum()), len(b) - 2)
+            gh = ga = 0
+            while gi < len(times) and abs(times[gi] - z) < 1e-12:
+                gh += sides[gi] == "H"
+                ga += sides[gi] == "A"
+                gi += 1
+            rows.append((mt.match_id, mt.home, mt.away, 1, k, int(np.clip(hg - ag, -2, 2)), z - a, gh))
+            rows.append((mt.match_id, mt.away, mt.home, 0, k, int(np.clip(ag - hg, -2, 2)), z - a, ga))
+            hg, ag = hg + gh, ag + ga
+    seg = pd.DataFrame(rows, columns=["match_id", "team", "opponent", "is_home", "bin",
+                                      "diff", "length", "goals"])
+    return seg[seg.length > 0].reset_index(drop=True)
+
+
+def _poisson_newton(X, offset, y, ridge, max_iter=100, tol=1e-10):
+    """Penalised Poisson regression by Newton's method (X sparse or dense)."""
+    from scipy.sparse import issparse
+    th = np.zeros(X.shape[1])
+    for _ in range(max_iter):
+        eta = offset + X @ th
+        mu = np.exp(eta)
+        grad = X.T @ (y - mu) - ridge * th
+        W = X.multiply(mu[:, None]) if issparse(X) else X * mu[:, None]
+        H = np.asarray((X.T @ W).todense() if issparse(W) else X.T @ W) + np.diag(ridge)
+        step = np.linalg.solve(H, grad)
+        th += step
+        if np.max(np.abs(step)) < tol:
+            break
+    eta = offset + X @ th
+    ll = float(y @ eta - np.exp(eta).sum())
+    return th, np.linalg.inv(H), ll
+
+
+def _cond_loglik(theta, X, length, goals, tm_codes, n_tm):
+    eta = X @ theta
+    mu = length * np.exp(eta)
+    denom = np.bincount(tm_codes, mu)
+    keep = n_tm > 0
+    ll = goals @ eta - (n_tm[keep] * np.log(denom[keep])).sum()
+    share = mu / denom[tm_codes]
+    grad = X.T @ goals - X.T @ (share * n_tm[tm_codes])
+    return ll, grad
+
+
+def score_design(seg, n_bins, states, teams=None, ridge=1e-4):
+    """Sparse design for the segment Poisson model.
+
+    Columns: intercept, home, time bins 1..n_bins-1, score states (level is the
+    reference), then attack and defence per team if `teams` is given. Returns
+    (X, ridge penalties, names of the shape columns, number of fixed columns).
+    """
+    from scipy.sparse import csr_matrix, hstack
+    n = len(seg)
+    dense = [np.ones(n), seg.is_home.to_numpy(float)]
+    dense += [(seg.bin.to_numpy() == k).astype(float) for k in range(1, n_bins)]
+    dense += [(seg["diff"].to_numpy() == d).astype(float) for d in states]
+    names = [f"bin {k}" for k in range(1, n_bins)] + [f"diff {d:+d}" for d in states]
+    n_fixed = len(dense)
+    blocks = [csr_matrix(np.column_stack(dense))]
+    pen = [0.0] * n_fixed
+    if teams is not None:
+        ti, oi = teams.get_indexer(seg.team), teams.get_indexer(seg.opponent)
+        if (ti < 0).any() or (oi < 0).any():
+            raise ValueError("segments contain teams not in `teams`")
+        blocks += [csr_matrix((np.ones(n), (np.arange(n), ti)), shape=(n, len(teams))),
+                   csr_matrix((-np.ones(n), (np.arange(n), oi)), shape=(n, len(teams)))]
+        pen += [ridge] * (2 * len(teams))  # pins the attack/defence level per league
+    return hstack(blocks).tocsr(), np.array(pen), names, n_fixed
+
+
+def fit_score_effects(matches: pd.DataFrame, events: pd.DataFrame, bin_minutes=15,
+                      stoppage_step=0.5, score_effects=True, method="poisson",
+                      ridge=1e-4, folds=5, seed=0) -> ScoreEffects:
+    """Fit time-bin and score-state effects jointly.
+
+    method:
+      "poisson"     full likelihood with in-sample team attack/defence and home
+                    advantage: the *tactical* effect of the score
+      "predictive"  team strengths cross-fitted on other matches (out-of-fold
+                    offsets); effects relative to an estimated strength. Use
+                    this for pricing.
+      "naive"       full likelihood without team strengths (confounded by strength)
+      "conditional" conditions on each team's goals per match (invalid; see module notes)
+
+    Returns multipliers m(d) with standard errors, and a GoalIntensity whose
+    weights are the time effects net of score effects (normalised to expected
+    integrated intensity 1 *before* score effects; the pricer recalibrates per
+    match so expected goals equal the pre-match lambdas).
+    """
+    base = fit_goal_intensity(matches, events, bin_minutes, stoppage_step)
+    seg = build_segments(matches, events, tuple(base.edges1), tuple(base.edges2))
+    n_bins = len(base.weights)
+    states = [d for d in DIFF_STATES if d != 0] if score_effects else []
+    L, Y = seg.length.to_numpy(float), seg.goals.to_numpy(float)
+
+    if method == "conditional":
+        X = np.column_stack([(seg.bin.to_numpy() == k).astype(float) for k in range(1, n_bins)] +
+                            [(seg["diff"].to_numpy() == d).astype(float) for d in states])
+        names = [f"bin {k}" for k in range(1, n_bins)] + [f"diff {d:+d}" for d in states]
+        tm_codes, _ = pd.factorize(seg.match_id.astype(str) + "|" + seg.team)
+        n_tm = np.bincount(tm_codes, Y)
+
+        def f(th):
+            ll, g = _cond_loglik(th, X, L, Y, tm_codes, n_tm)
+            return -ll, -g
+
+        res = _minimize(f, np.zeros(X.shape[1]), jac=True, method="L-BFGS-B",
+                        options={"maxiter": 5000, "gtol": 1e-9})
+        th, ll = res.x, -res.fun
+        eps = 1e-5
+        H = np.empty((len(th), len(th)))
+        for j in range(len(th)):
+            e = np.zeros(len(th)); e[j] = eps
+            H[:, j] = (f(th + e)[1] - f(th - e)[1]) / (2 * eps)
+        cov = np.linalg.inv((H + H.T) / 2)
+    elif method == "predictive":
+        teams = pd.Index(sorted(set(seg.team) | set(seg.opponent)))
+        X0, pen0, _, nf0 = score_design(seg, n_bins, [], teams, ridge)
+        rng = np.random.default_rng(seed)
+        mids = seg.match_id.unique()
+        fold = seg.match_id.map(dict(zip(mids, rng.integers(0, folds, len(mids))))).to_numpy()
+        strength_cols = np.r_[[0, 1], np.arange(nf0, X0.shape[1])]  # intercept, home, att, def
+        offset = np.zeros(len(seg))
+        for k in range(folds):
+            tr, te = fold != k, fold == k
+            th0, _, _ = _poisson_newton(X0[tr], np.log(L[tr]), Y[tr], pen0)
+            offset[te] = X0[te][:, strength_cols] @ th0[strength_cols]
+        X, _, names, n_fixed = score_design(seg, n_bins, states, None, ridge)
+        keep = np.r_[0, np.arange(2, X.shape[1])]  # home is inside the offset
+        X = X[:, keep]
+        th_all, cov_all, ll = _poisson_newton(X, np.log(L) + offset, Y, np.zeros(X.shape[1]))
+        th = th_all[1:]
+        cov = cov_all[1:, 1:]
+    elif method in ("poisson", "naive"):
+        teams = (pd.Index(sorted(set(seg.team) | set(seg.opponent)))
+                 if method == "poisson" else None)
+        X, pen, names, n_fixed = score_design(seg, n_bins, states, teams, ridge)
+        th_all, cov_all, ll = _poisson_newton(X, np.log(L), Y, pen)
+        th = th_all[2:n_fixed]
+        cov = cov_all[2:n_fixed, 2:n_fixed]
+    else:
+        raise ValueError(method)
+    se = np.sqrt(np.diag(cov))
+
+    gamma = np.r_[0.0, th[:n_bins - 1]]
+    prof = GoalIntensity(base.edges1, base.edges2, np.exp(gamma), base.s1, base.s2, base.probs)
+    prof.weights = prof.weights / prof.total()
+    beta = np.zeros(len(DIFF_STATES))
+    beta_se = np.zeros(len(DIFF_STATES))
+    for j, d in enumerate(states):
+        beta[DIFF_STATES.index(d)] = th[n_bins - 1 + j]
+        beta_se[DIFF_STATES.index(d)] = se[n_bins - 1 + j]
+    table = pd.DataFrame({
+        "goal difference (scoring team's view)": ["≤ −2", "−1", "0 (level)", "+1", "≥ +2"],
+        "exposure_min": [round(seg.length[seg["diff"] == d].sum()) for d in DIFF_STATES],
+        "goals": [int(seg.goals[seg["diff"] == d].sum()) for d in DIFF_STATES],
+        "multiplier": np.exp(beta).round(3),
+        "ci_low": np.exp(beta - 1.96 * beta_se).round(3),
+        "ci_high": np.exp(beta + 1.96 * beta_se).round(3),
+    })
+    table.attrs.update(loglik=ll, method=method, param_names=names,
+                       gamma_se=np.r_[0.0, se[:n_bins - 1]])
+    return ScoreEffects(np.exp(beta), prof, beta_se, table)
+
+
+# -- pricing with score effects ------------------------------------------------
+def _score_index(H, A):
+    return lambda x, y: x * (A + 1) + y
+
+
+def _generators(eff: ScoreEffects, rh, ra, hg0, ag0, max_remaining):
+    """Per-bin sparse generators (transposed, for column-vector propagation) on
+    the truncated score grid hg0..hg0+R, ag0..ag0+R."""
+    R = max_remaining
+    xs, ys = np.meshgrid(np.arange(R + 1), np.arange(R + 1), indexing="ij")
+    x, y = xs.ravel(), ys.ravel()
+    d = (hg0 + x) - (ag0 + y)
+    mh, ma = eff.m(d), eff.m(-d)
+    n = len(x)
+    idx = x * (R + 1) + y
+    out = []
+    for w in eff.profile.weights:
+        qh = np.where(x < R, rh * w * mh, 0.0)
+        qa = np.where(y < R, ra * w * ma, 0.0)
+        rows = np.r_[idx, idx[x < R] + (R + 1), idx[y < R] + 1]
+        cols = np.r_[idx, idx[x < R], idx[y < R]]
+        vals = np.r_[-(qh + qa), qh[x < R], qa[y < R]]
+        out.append(_csr((vals, (rows, cols)), shape=(n, n)))  # dp/dt = Q^T p
+    return out
+
+
+def _propagate(eff, gens, u0, scen_bounds, R):
+    """Distribution over remaining goals (R+1, R+1) after play from u0 to the end."""
+    p = np.zeros((R + 1) ** 2)
+    p[0] = 1.0
+    for k in range(len(eff.profile.weights)):
+        dt = scen_bounds[k + 1] - max(scen_bounds[k], u0)
+        if dt > 0:
+            p = _expm_multiply(gens[k] * dt, p)
+    return np.clip(p, 0, None).reshape(R + 1, R + 1)
+
+
+def _remaining_dist_se(eff, rh, ra, hg, ag, period, minute, R):
+    """Scenario-mixed distribution of remaining goals under score effects."""
+    prof = eff.profile
+    w = prof.scenario_weights(period, minute)
+    if w.sum() == 0:
+        out = np.zeros((R + 1, R + 1)); out[0, 0] = 1.0
+        return out
+    gens = _generators(eff, rh, ra, hg, ag, R)
+    b = prof.bounds(prof.s1, prof.s2)
+    u0 = prof.played_time(period, minute, prof.s1)
+    dist = np.zeros((R + 1, R + 1))
+    for k in np.flatnonzero(w > 0):
+        dist += w[k] * _propagate(eff, gens, u0[k], b[k], R)
+    return dist
+
+
+def calibrate(eff: ScoreEffects, lam_h, lam_a, max_remaining=10, tol=1e-7, max_iter=50,
+              exact=False):
+    """Scale factors (c_h, c_a) so pre-match expected goals equal (lam_h, lam_a).
+
+    By default the fixed-point iteration runs on the profile with stoppage fixed
+    at its mean, which is ~100x faster and matches the exact (scenario-mixture)
+    answer to about 1e-5 in expected goals; `exact=True` uses every scenario.
+    """
+    use = eff if exact else ScoreEffects(eff.multipliers, eff.profile.with_mean_stoppage())
+    c = np.array([1.0, 1.0])
+    g = np.arange(max_remaining + 1)
+    for _ in range(max_iter):
+        dist = _remaining_dist_se(use, c[0] * lam_h, c[1] * lam_a, 0, 0, 1, 0.0, max_remaining)
+        e = np.array([g @ dist.sum(1), g @ dist.sum(0)])
+        new = c * np.array([lam_h, lam_a]) / e
+        if np.max(np.abs(new - c)) < tol:
+            return new
+        c = new
+    return c
+
+
+def price_se(eff: ScoreEffects, lam_h, lam_a, home_goals=0, away_goals=0, minute=0.0,
+             period=None, rho=0.0, lines=DEFAULT_LINES, max_remaining=10,
+             scale=None) -> dict:
+    """Exact in-play prices for one match state with score effects (Markov chain).
+
+    Returns 1-d arrays (one state), like the Monte Carlo pricers.
+
+    `scale` = (c_h, c_a) from `calibrate`; computed if not given (cache it when
+    pricing many states of the same match).
+    """
+    period = default_period(minute) if period is None else period
+    R = max_remaining
+    c = calibrate(eff, lam_h, lam_a, R) if scale is None else np.asarray(scale)
+    dist = _remaining_dist_se(eff, c[0] * lam_h, c[1] * lam_a, int(home_goals),
+                              int(away_goals), period, minute, R)
+    size = R + 1 + max(int(home_goals), int(away_goals))
+    grid = np.zeros((1, size, size))
+    grid[0, home_goals:home_goals + R + 1, away_goals:away_goals + R + 1] = dist
+    if rho != 0.0:
+        grid[0] *= dc_tau(*np.meshgrid(np.arange(size), np.arange(size), indexing="ij"),
+                          lam_h, lam_a, rho)
+    grid /= grid.sum()
+    return {"1x2": grid_to_1x2(grid)[0], "over": grid_to_overs(grid, lines)[0],
+            "lines": tuple(lines), "scale": c}
+
+
+def mc_price_se(eff: ScoreEffects, lam_h, lam_a, home_goals=0, away_goals=0, minute=0.0,
+                period=None, n_sims=100_000, rho=0.0, lines=DEFAULT_LINES, seed=None,
+                scale=None, max_remaining=10, log=None) -> dict:
+    """Monte Carlo prices with score effects (thinning with state-dependent rates)."""
+    rng = np.random.default_rng(seed)
+    period = default_period(minute) if period is None else period
+    c = calibrate(eff, lam_h, lam_a, max_remaining) if scale is None else np.asarray(scale)
+    rh, ra = c[0] * lam_h, c[1] * lam_a
+    prof = eff.profile
+    probs = prof.scenario_weights(period, minute)
+    hg = np.full(n_sims, int(home_goals))
+    ag = np.full(n_sims, int(away_goals))
+    if probs.sum() > 0:
+        sc = rng.choice(len(probs), n_sims, p=probs)
+        bounds = prof.bounds(prof.s1[sc], prof.s2[sc])
+        start = prof.played_time(period, minute, prof.s1[sc])
+        wb = prof.weights
+        cap_h, cap_a = home_goals + max_remaining, away_goals + max_remaining
+
+        def rate_fn(u, h, a, idx):
+            b = (u[:, None] >= bounds[idx, 1:-1]).sum(1)
+            return (np.where(h < cap_h, rh * wb[b] * eff.m(h - a), 0.0),
+                    np.where(a < cap_a, ra * wb[b] * eff.m(a - h), 0.0))
+
+        bound = (rh + ra) * wb.max() * eff.multipliers.max()
+        _thinning(start, bounds[:, -1], hg, ag, rate_fn, bound, rng, log)
+    w = dc_tau(hg, ag, lam_h, lam_a, rho) if rho != 0.0 else np.ones(n_sims)
+    out = _mc_estimates(hg, ag, w, lines)
+    out["scale"] = c
+    return out

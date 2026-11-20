@@ -292,3 +292,113 @@ def test_fit_recovers_known_intensity_shape():
     rel_err = np.abs(fit.weights - true.weights) / true.weights
     assert rel_err[[0, 1, 2, 4, 5, 6]].max() < 0.08    # regulation bins: lots of exposure
     assert fit.table.attrs["goals_per_match"] == pytest.approx(2.6, rel=0.03)
+
+
+# ---------------------------------------------------------------------------
+# Step 4: score effects
+# ---------------------------------------------------------------------------
+TOY_MULT = np.array([1.4, 1.2, 1.0, 0.85, 0.7])  # strong effects so tests have power
+
+
+def _toy_effects(mult=TOY_MULT):
+    return inplay.ScoreEffects(np.asarray(mult, float), _toy_profile())
+
+
+def test_no_score_effects_reproduces_step3():
+    eff = inplay.ScoreEffects.none(_toy_profile())
+    for h, a, m, p in TV_STATES:
+        for rho in (0.0, RHO):
+            se = inplay.price_se(eff, LH, LA, h, a, m, p, rho=rho, scale=(1.0, 1.0))
+            tv = inplay.price_tv(eff.profile, LH, LA, h, a, m, p, rho=rho)
+            assert np.allclose(se["1x2"], tv["1x2"][0], atol=1e-6)
+            assert np.allclose(se["over"], tv["over"][0], atol=1e-6)
+
+
+def test_calibration_preserves_prematch_expected_goals():
+    eff = _toy_effects()
+    c = inplay.calibrate(eff, LH, LA)
+    g = np.arange(11)
+    dist = inplay._remaining_dist_se(eff, c[0] * LH, c[1] * LA, 0, 0, 1, 0.0, 10)
+    assert g @ dist.sum(1) == pytest.approx(LH, abs=1e-3)
+    assert g @ dist.sum(0) == pytest.approx(LA, abs=1e-3)
+    exact = inplay.calibrate(eff, LH, LA, exact=True)
+    assert np.allclose(c, exact, atol=1e-3)
+
+
+@pytest.mark.parametrize("rho", [0.0, -0.08])
+def test_score_effects_monte_carlo_matches_markov_chain(rho):
+    eff = _toy_effects()
+    c = inplay.calibrate(eff, LH, LA)
+    zs = []
+    for i, (h, a, m, p) in enumerate(TV_STATES):
+        mc = inplay.mc_price_se(eff, LH, LA, h, a, m, p, N_SIMS, rho=rho, seed=500 + i, scale=c)
+        ex = inplay.price_se(eff, LH, LA, h, a, m, p, rho=rho, scale=c)
+        zs.extend(_compare_mc(np.r_[mc["1x2"], mc["over"]], np.r_[mc["1x2_se"], mc["over_se"]],
+                              np.r_[ex["1x2"], ex["over"]], N_SIMS))
+    z = np.array(zs)
+    assert np.abs(z).max() < 4.5 and abs(z.mean()) < 0.6 and 0.4 < (z ** 2).mean() < 1.8
+
+
+def _simulate_league(mult, n_seasons=3, n_teams=20, strength_sd=0.35, seed=1):
+    """Matches with unequal teams, a known time shape and known score effects."""
+    rng = np.random.default_rng(seed)
+    prof = _toy_profile()
+    pairs, lam_h, lam_a = [], [], []
+    for s in range(n_seasons):
+        att, dfn = rng.normal(0, strength_sd, n_teams), rng.normal(0, strength_sd, n_teams)
+        for i in range(n_teams):
+            for j in range(n_teams):
+                if i != j:
+                    pairs.append((f"S{s}T{i}", f"S{s}T{j}"))
+                    lam_h.append(np.exp(0.3 + 0.25 + att[i] - dfn[j]))
+                    lam_a.append(np.exp(0.3 + att[j] - dfn[i]))
+    n = len(pairs)
+    lam_h, lam_a = np.array(lam_h), np.array(lam_a)
+    sc = rng.choice(len(prof.probs), n, p=prof.probs)
+    bounds = prof.bounds(prof.s1[sc], prof.s2[sc])
+    wb, mult = prof.weights, np.asarray(mult)
+    m_of = lambda d: mult[np.clip(d, -2, 2) + 2]
+
+    def rate_fn(u, h, a, idx):
+        b = (u[:, None] >= bounds[idx, 1:-1]).sum(1)
+        return lam_h[idx] * wb[b] * m_of(h - a), lam_a[idx] * wb[b] * m_of(a - h)
+
+    hg, ag, log = np.zeros(n, int), np.zeros(n, int), []
+    bound = (lam_h + lam_a).max() * wb.max() * mult.max()
+    inplay._thinning(np.zeros(n), bounds[:, -1], hg, ag, rate_fn, bound, rng, log)
+    end1 = bounds[:, len(prof.edges1)]
+    ev = pd.DataFrame([{"match_id": i, "period": 1 if u < end1[i] else 2,
+                        "t": u if u < end1[i] else 45 + (u - end1[i]),
+                        "event": "goal", "side": side} for i, u, side in log])
+    mt = pd.DataFrame({"match_id": np.arange(n), "home": [p[0] for p in pairs],
+                       "away": [p[1] for p in pairs], "end_p1": 45 + prof.s1[sc],
+                       "end_p2": 90 + prof.s2[sc]})
+    return mt, ev
+
+
+def test_fit_recovers_score_effects_and_shows_the_biased_alternatives():
+    true = np.array([1.25, 1.12, 1.0, 0.9, 0.8])
+    mt, ev = _simulate_league(true)
+    fit = inplay.fit_score_effects(mt, ev)
+    z = (np.log(fit.multipliers) - np.log(true))[[0, 1, 3, 4]] / fit.se_log[[0, 1, 3, 4]]
+    assert np.abs(z).max() < 3.5
+    # time shape net of score effects is recovered too
+    assert np.allclose(fit.profile.weights[[0, 1, 2, 4, 5, 6]] / fit.profile.weights[0],
+                       _toy_profile().weights[[0, 1, 2, 4, 5, 6]] / _toy_profile().weights[0],
+                       rtol=0.12)
+    # ignoring team strength: leaders look like they score MORE (confounding)
+    naive = inplay.fit_score_effects(mt, ev, method="naive")
+    assert naive.multipliers[4] > true[4] * 1.15
+    # conditioning on each team's goals: wildly overstated effects (invalid likelihood)
+    cond = inplay.fit_score_effects(mt, ev, method="conditional")
+    assert cond.multipliers[3] < true[3] * 0.6 and cond.multipliers[1] > true[1] * 1.3
+
+
+def test_predictive_effects_include_learning_about_strength():
+    """With strengths estimated out-of-fold, leading is also evidence of being stronger
+    than estimated, so predictive multipliers for leaders sit above the tactical ones."""
+    mt, ev = _simulate_league(np.array([1.25, 1.12, 1.0, 0.9, 0.8]))
+    tac = inplay.fit_score_effects(mt, ev).multipliers
+    pred = inplay.fit_score_effects(mt, ev, method="predictive")
+    assert pred.multipliers[4] > tac[4] * 1.04 and pred.multipliers[3] > tac[3]
+    assert np.all(np.isfinite(pred.se_log)) and pred.profile.total() == pytest.approx(1.0)

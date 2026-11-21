@@ -47,7 +47,8 @@ divisions matter.
    - Dixon–Coles with time decay; upgrade to a dynamic bivariate Poisson model
      (Koopman & Lit 2015)
    - Shot-based ratings (GAP, Wheatcroft 2020/21) and xG (from Understat; FBref's
-     advanced stats were removed in January 2026)
+     advanced stats were removed in January 2026). Done with a shot-count proxy calibrated
+     to StatsBomb xG; see Pre-match results.
    - Gradient boosting on rating features (the winning recipe of the 2017 Soccer
      Prediction Challenge)
 3. **Combine with the market:**
@@ -65,6 +66,56 @@ divisions matter.
      confidence intervals.
 6. **Markets:** 1X2 and over/under 2.5 goals. Wheatcroft found the over/under market
    profitable with shot-based ratings.
+
+## Pre-match results
+
+### Baseline (6 leagues, `reports/baseline_real.md`)
+
+Pinnacle's closing price beats every model: RPS 0.2025 (opening 0.2032) against pi-ratings
+0.2092, Dixon–Coles 0.2097 (scored on the later part of the period only), Elo 0.2107
+and a naive base rate 0.2321. A log-linear blend
+gives the market weight 0.974 and the model −0.006.
+
+### xG-style ratings (big-5 leagues, `src/sportsq/xg.py`, `scripts/xg_eval.py`)
+
+- **Model.** The Dixon–Coles attack/defence structure is fitted to a continuous target
+  (1 − α) × goals + α × xG with a time-decayed Poisson quasi-likelihood (valid for
+  non-integer targets) and an analytic gradient. ρ comes from the goals fit, because the
+  low-score correction describes final scores, which xG cannot inform. Team names are
+  matched across sources automatically from shared dates and scores.
+- **Design (pre-registered in the trials log).** Weekly walk-forward from 2016/17 with a
+  two-year window; α ∈ {0.25, 0.5, 0.75, 1} chosen on 2016/17–2018/19; reported on
+  2019/20–2022/23 (7,203 matches). Measures: RPS against results, total-variation distance
+  from the market's probabilities, and the model's weight in a market blend.
+- **Synthetic check.** With synthetic xG (0.11 × shots) the pipeline improves on goals
+  (−0.0022 RPS) and moves 15% closer to the market, so it can find xG signal.
+- **xG source.** Understat was down on 21 Nov 2026 (`scripts/fetch_understat.py` is ready).
+  Two shot-count proxies from football-data were used instead:
+  - *Proxy 1:* fitted to goals on development seasons: ≈ 0.31 × shots on target. Partly
+    circular, because every goal is a shot on target.
+  - *Proxy 2:* calibrated to real StatsBomb xG for every 2015/16 match in four leagues
+    (1,517 matches; before all evaluation seasons): 0.194 × on target + 0.052 × off target.
+    Leave-one-league-out correlation with xG: goals 0.60, proxy 1 0.68, proxy 2 0.73;
+    corners add nothing (`reports/xg_proxy_calibration.txt`).
+
+| Validation 2019/20–2022/23 | RPS | Distance from market (pts) |
+|---|---|---|
+| Market (Pinnacle close, Shin) | **0.19768** | 0 |
+| Goals Dixon–Coles | 0.20509 | 7.53 |
+| Proxy 1, α = 0.5 (best) | 0.20355 | 6.99 |
+| Proxy 2, α = 0.25 | 0.20388 | 7.06 |
+
+- Proxy 1 vs goals: −0.00154 (95% CI −0.00229 to −0.00084), better in all five leagues.
+  It closes 21% of the RPS gap to the market (0.00742 → 0.00587).
+- Model vs market: +0.00587 (CI +0.00449 to +0.00720). The market's blend weight stays
+  ≈ 1 and the model's ≈ 0 (slightly negative); the blend does not beat the market.
+- Proxy 2 vs proxy 1: +0.00033 (CI −0.00002 to +0.00070). Tracking xG more closely did not
+  forecast better: proxy 1 keeps finishing and set-piece information that persists for
+  good teams. Mixing goals with xG beats either alone (α = 1 is worse than goals).
+- Reports: `reports/xg_eval_shots.md`, `reports/xg_eval_shots2.md`, `reports/xg_eval_sim.md`.
+
+**Best pre-match model so far:** Dixon–Coles with time decay on a 50/50 goals + proxy-1
+target. It is 0.006 RPS behind the market and adds nothing to it.
 
 ## In-play
 
@@ -242,6 +293,60 @@ state. The plan, with the order of steps and success criteria, is in
     in football-data). That's a natural refinement.
   - Step 6 decides whether score effects earn their place.
 
+### Step 6: evaluation on 2022/23 (done; 2024/25 stays locked)
+
+- **Data:** Betfair Exchange BASIC, Premier League 2022/23. 370/380 matches, with
+  timelines rebuilt from the markets. Goal counts were 100% right, and half-time scores
+  98.9% right. There are 2,737 evaluation states after skipping 3 minutes after goals.
+- **Design:**
+  - Each model's pre-match rates are fitted so that its own kick-off prices match the
+    market. The models then differ only in in-play updating.
+  - States are scored at 0', 15', 30', HT, 60', 75', 85' and 90' against final results
+    (RPS; Brier score for over 2.5), with paired match-block bootstrap CIs.
+- **Decision rule:** revised before any real data was seen, after the synthetic check
+  showed the original rule rejected a true model (see the plan).
+- **Results** (`reports/inplay_eval_2223.md`):
+  - **Step 3, time-varying rates + stoppage: KEEP.** Pooled RPS −0.00154 (95% CI −0.00259
+    to −0.00054). The gains are concentrated late: −0.0028 at 85' and −0.0041 at 90',
+    both CIs below 0. No minute is worse.
+  - **Step 4, score effects: DROP.** Pooled −0.00009 (CI −0.00042 to +0.00024), which
+    matches the neutral out-of-sample result in Step 4.
+  - **Versus the market:** the market is more accurate at every in-play minute.
+    - M1 is significantly worse than the market at 15', 85' and 90'. M3 closes the late
+      gap: at 85' and 90' it is no longer significantly worse.
+    - The models sit 4–7 probability points from the market from 30' onwards. The
+      market uses information the models lack: red cards, in-game performance, team
+      news and the announced stoppage time.
+  - **Over 2.5** (settled markets set to 1): late in matches M3 is close to the market
+    (90': 0.0319 vs 0.0309), while M1 is worse (0.0381). The differences were not
+    formally tested.
+- **Synthetic check** (`reports/inplay_eval_synthetic_s*.md`): on simulated seasons where
+  the truth is M3, the same pipeline keeps M3 and drops score effects, as it should.
+- **What would close the gap next:** red cards (observable from other data sources),
+  in-game statistics such as shots/xG, and modelling the announced added time.
+
+## Market-efficiency and alternative-data tests
+
+All on seasons before the holdout, against the sharp closing price; scripts in `scripts/`,
+outputs in `reports/`, full numbers in the private trials log.
+
+| Test | Data | Result | Verdict |
+|---|---|---|---|
+| Bookmaker consensus vs Pinnacle (Kaunitz on the sharp book) — `consensus_sharp.py`, `consensus_leaders.py` | All leagues 2019/20–2022/23; books chosen on 2019/20–2020/21, tested on 2021/22–2022/23 | Pinnacle moves 31% toward BetVictor and 23% toward Interwetten by kick-off; Bwin and Bet365 follow Pinnacle. Best signal: CLV −1.5% vs −3.2% baseline, −0.2% ± 1.0% at 1-pt gaps | Real information, cannot beat the margin from a Friday snapshot |
+| Weather vs over/under 2.5 — `weather_ou.py` | E0–E3 2019/20–2022/23, 7,880 matches, Open-Meteo at 96 grounds | Wind +0.005 ± 0.036 log-odds per 10 km/h; rain, temperature ≈ 0; planted effect recovered in a synthetic check. A +7% best-price ROI also appears without weather (recalibration + best-price selection) | Priced in |
+| Crowd-free football — `ghost_games.py` | 18 leagues 2016/17–2022/23, 46,274 matches | Priced home edge 0.144 → 0.090 (actual 0.082) → 0.129; residual −0.3 ± 0.5 pts; only hint of lag: May 2020 Bundesliga (n = 73) | Adapted almost at once |
+| Popular clubs — `popular_teams.py` | 6 leagues 2016/17–2022/23 | Soft books price big clubs ~1 pt less generously than Pinnacle at the same price; Pinnacle residual +0.8 ± 1.0 pts after controlling for price band (raw +1.5 is favourite–longshot bias) | Soft-book shading; sharp price fair |
+| In-play match odds vs over/under 2.5 — `inplay_consistency.py` | Betfair EPL 2022/23, 26,298 snapshots | Match-odds-implied over price adds information (weight 0.34 ± 0.15 next to the OU price 0.95); both converge within 5 minutes; gap trade +3–5% per unit ± 2.5% before commission | Open lead; confirmation on 2021/22 pre-registered |
+
+**Reading the results together.** The closing price absorbs slow-moving public information
+(team strength, shots, weather, venue effects, popularity). What remains is speed (line-ups,
+live events), market structure (consistency between related markets, order-book data) and
+soft bookmakers, whose mispricing is real but whose accounts limit winners.
+
+**Data limits.** Betfair BASIC gives last-traded prices, not the order book; football-data's
+"opening" price is a Friday snapshot, not the true opening line; exchange commission and
+spreads are not modelled; in-play data covers the Premier League only.
+
 ## Pre-registered success criteria (holdout)
 
 - **Forecast:** the blend's RPS is below the opening market's, with a 95% CI below 0.
@@ -276,6 +381,9 @@ CLV against Pinnacle and exchange prices is the honest test.
 - Koopman & Lit (2015). A dynamic bivariate Poisson model for the English Premier League. *JRSS A* 178(1); (2019) score-driven models, *IJF* 35(2).
 - Walsh & Joshi (2024). Machine learning for sports betting: accuracy or calibration? *MLWA* 16.
 - Wheatcroft (2020). A profitable model for predicting the over/under market in football. *IJF* 36(3); (2021) Forecasting football matches by predicting match statistics. *JSA* 7(2).
+- Grinsztajn, Oyallon & Varoquaux (2022). Why do tree-based models still outperform deep learning on tabular data? *NeurIPS Datasets and Benchmarks*.
+- StatsBomb open data (shot-level xG, 2015/16 seasons of four big-5 leagues): github.com/statsbomb/open-data.
+- Open-Meteo historical weather API (ERA5 reanalysis, CC BY 4.0): open-meteo.com.
 - Lewis & Shedler (1979). Simulation of nonhomogeneous Poisson processes by thinning. *Naval Research Logistics Quarterly* 26(3).
 - Dixon & Robinson (1998). A birth process model for association football matches. *JRSS D* 47(3).
 - Wunderlich & Memmert (2018). The Betting Odds Rating System. *PLOS ONE* 13(6); (2020) Are betting returns a useful measure of accuracy? *IJF* 36(2).

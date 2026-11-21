@@ -1,0 +1,56 @@
+matches with weather: 7880 (train 3808, test 4072)
+
+## 1. Over-2.5 rate vs closing price, by weather bucket (all seasons)
+bucket                    n   over   market   diff    (se)   goals
+wind_ko < 15 km/h       3366  0.465   0.479  -0.014  (0.009)  2.56
+wind_ko 15-25           2801  0.491   0.476  +0.015  (0.009)  2.59
+wind_ko 25-35           1400  0.444   0.472  -0.029  (0.013)  2.49
+wind_ko >= 35            313  0.463   0.474  -0.011  (0.028)  2.44
+rain_pre = 0            4790  0.463   0.476  -0.013  (0.007)  2.54
+rain_pre 0-2 mm         2590  0.480   0.477  +0.003  (0.010)  2.56
+rain_pre >= 2 mm         500  0.496   0.483  +0.013  (0.022)  2.67
+temp_ko < 5 C            966  0.450   0.472  -0.021  (0.016)  2.49
+temp_ko >= 20 C          480  0.504   0.481  +0.023  (0.023)  2.68
+
+## 2. Logistic: logit P(over) = c + a*logit(market) + weather (train)
+[known]  LR stat 0.44 on 3 df
+   const     -0.054 (0.093) 
+   market    +1.058 (0.117) 
+   wind_ko   +0.005 (0.036) per 10
+   rain_pre  +0.019 (0.031) per 1
+   temp_ko   -0.006 (0.063) per 10
+   test log loss  weather-recalibrated minus recalibrated market: -0.00016 (0.00017)
+   test log loss  weather model minus raw market:                 +0.00014 (0.00046)
+   bet at PC   close, EV>0.00:   488 bets (33 over / 455 under)  ROI -0.0203 (0.0415)
+   bet at MaxC close, EV>0.00:  3301 bets (375 over / 2926 under)  ROI +0.0000 (0.0167)
+   bet at MaxC close, EV>0.02:  1687 bets (130 over / 1557 under)  ROI +0.0308 (0.0239)
+   bet at MaxC close, EV>0.04:   786 bets (44 over / 742 under)  ROI +0.0717 (0.0358)
+[match]  LR stat 0.75 on 3 df
+   const     -0.065 (0.093) 
+   market    +1.062 (0.117) 
+   wind_m    +0.011 (0.036) per 10
+   rain_m    +0.035 (0.047) per 1
+   temp_ko   -0.008 (0.063) per 10
+   test log loss  weather-recalibrated minus recalibrated market: -0.00010 (0.00026)
+   test log loss  weather model minus raw market:                 +0.00021 (0.00051)
+   bet at PC   close, EV>0.00:   853 bets (54 over / 799 under)  ROI -0.0397 (0.0313)
+   bet at PC   close, EV>0.02:    37 bets (33 over / 4 under)  ROI +0.1230 (0.1640)
+   bet at MaxC close, EV>0.00:  3358 bets (391 over / 2967 under)  ROI -0.0057 (0.0165)
+   bet at MaxC close, EV>0.02:  1797 bets (151 over / 1646 under)  ROI +0.0262 (0.0231)
+   bet at MaxC close, EV>0.04:   838 bets (65 over / 773 under)  ROI +0.0675 (0.0346)
+
+## 3. Wind effect by division (all seasons, 'known' wind only)
+   E0: +0.006 (0.061) log-odds per 10 km/h   n=1520
+   E1: -0.012 (0.049) log-odds per 10 km/h   n=2208
+   E2: -0.060 (0.049) log-odds per 10 km/h   n=2056
+   E3: +0.048 (0.049) log-odds per 10 km/h   n=2096
+
+## 4. Control: same betting rule with NO weather (recalibrated market only), test seasons
+   MaxC EV>0.00: 3130 bets  ROI -0.0025 (0.0171)
+   MaxC EV>0.02: 1498 bets  ROI +0.0170 (0.0254)
+   MaxC EV>0.04:  676 bets  ROI +0.0689 (0.0389)
+   always back Under at MaxC: 4072 bets ROI -0.0044 (0.0150)
+   -> the Max-odds ROI comes from recalibration + best-price selection, not weather.
+
+Verdict: no detectable weather effect beyond the Pinnacle close. Wind coefficient
++0.005 +/- 0.036 log-odds per 10 km/h (95% CI roughly -0.07 to +0.08). DROP.

@@ -1,0 +1,34 @@
+matches: train 12489, test 12514
+
+## 1. Who leads?  gap = book early - Pinnacle early (prob points)
+book   PS closes gap  (corr)   book closes gap   mean|gap|
+B365    0.133       (0.055)    0.602          0.86
+BW      0.003       (0.001)    0.746          0.85
+IW      0.234       (0.089)    0.096          0.78
+VC      0.306       (0.108)    0.346          0.73
+WH      0.208       (0.070)    0.398          0.65
+Avg     0.372       (0.087)    0.184          0.50
+Max     0.260       (0.062)    0.458          0.49
+
+## 2. Multivariate: Pinnacle move ~ all book gaps (fit on train)
+  B365  +0.055
+  BW    -0.239
+  IW    +0.132
+  VC    +0.232
+  WH    +0.032
+  Avg   +0.169
+test R^2 of Pinnacle move: all books -0.0001  vs Avg only -0.0064
+
+## 3. Betting Pinnacle early price on predicted move (test seasons only)
+signal     thr   bets   meanCLV   (se)      ROI      (se)
+Avg only  0.000  19352  -0.0315 (0.0007)  -0.0662 (0.0126)
+Avg only  0.005    715  -0.0195 (0.0047)  -0.1073 (0.0690)
+Avg only  0.010      1  (too few)
+Avg only  0.015      0  (too few)
+Avg only  0.020      0  (too few)
+all books 0.000  19072  -0.0267 (0.0006)  -0.0480 (0.0122)
+all books 0.005   2781  -0.0150 (0.0019)  -0.0026 (0.0340)
+all books 0.010    162  -0.0021 (0.0101)  -0.1561 (0.1317)
+all books 0.015     17  (too few)
+all books 0.020      3  (too few)
+baseline (all outcomes): CLV -0.0321, ROI -0.0472

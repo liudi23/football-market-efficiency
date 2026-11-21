@@ -1,0 +1,43 @@
+/sessions/rcw-01apk2cxsupts6fu76ttlvwi/mnt/sports-trading/scripts/popular_teams.py:36: RuntimeWarning: Mean of empty slice
+  soft = np.nanmean(np.stack([devig(d, b) if f"{b}H" in d else np.full((len(d), 3), np.nan)
+/sessions/rcw-01apk2cxsupts6fu76ttlvwi/mnt/sports-trading/scripts/popular_teams.py:59: RuntimeWarning: Mean of empty slice.
+  return x.mean(), x.std() / np.sqrt(len(x)), len(x)
+/usr/local/lib/python3.10/dist-packages/numpy/_core/_methods.py:145: RuntimeWarning: invalid value encountered in scalar divide
+  ret = ret.dtype.type(ret / rcount)
+/usr/local/lib/python3.10/dist-packages/numpy/_core/_methods.py:223: RuntimeWarning: Degrees of freedom <= 0 for slice
+  ret = _var(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/usr/local/lib/python3.10/dist-packages/numpy/_core/_methods.py:181: RuntimeWarning: invalid value encountered in divide
+  arrmean = um.true_divide(arrmean, div, out=arrmean,
+/usr/local/lib/python3.10/dist-packages/numpy/_core/_methods.py:215: RuntimeWarning: invalid value encountered in scalar divide
+  ret = ret.dtype.type(ret / rcount)
+team-sides: 28446  big-club sides (vs non-big): 3559
+
+## 1. Soft-book shading: soft consensus prob - Pinnacle prob (pts), same Pinnacle price band
+Pinnacle prob   big clubs (se)          other sides (se)        difference
+(0.2, 0.35]    +1.84 (0.30) n= 109   +0.80 (0.03) n= 7384   +1.05
+(0.35, 0.5]    +0.82 (0.17) n= 411   -0.30 (0.04) n= 6476   +1.12
+(0.5, 0.65]    -0.32 (0.11) n= 994   -1.33 (0.06) n= 3219   +1.01
+(0.65, 0.8]    -1.20 (0.08) n=1401   -2.08 (0.10) n=  968   +0.88
+(0.8, 1.0]     -2.17 (0.08) n= 636   -3.27 (0.35) n=   85   +1.09
+
+## 2. Does Pinnacle misprice big clubs?  win - Pinnacle prob, and ROI at Pinnacle close
+   big clubs        n= 3559  residual +0.0146 (0.0075)  ROI Pinnacle +0.0003 (0.0129)  ROI best price +0.0354 (0.0179)
+   their opponents  n= 3559  residual -0.0050 (0.0056)  ROI Pinnacle -0.0825 (0.0468)  ROI best price +0.0443 (0.0700)
+   all other sides  n=21328  residual +0.0001 (0.0031)  ROI Pinnacle -0.0336 (0.0103)  ROI best price +0.0085 (0.0146)
+
+## 3. By season: back big clubs' opponents at the best price
+   1617  n=   0  residual -0.0147 (0.0137)  ROI best price +nan (nan)
+   1718  n=   0  residual -0.0024 (0.0146)  ROI best price +nan (nan)
+   1819  n=   0  residual -0.0005 (0.0147)  ROI best price +nan (nan)
+   1920  n= 488  residual -0.0093 (0.0154)  ROI best price +0.1395 (0.1677)
+   2021  n= 512  residual -0.0084 (0.0152)  ROI best price +0.0874 (0.1414)
+   2122  n= 512  residual -0.0198 (0.0144)  ROI best price -0.0828 (0.1318)
+   2223  n= 512  residual +0.0197 (0.0160)  ROI best price +0.0376 (0.1168)
+
+## 4. Control for favourite-longshot bias: residual and ROI at Pinnacle close, same price band
+Pinnacle prob   big: residual (se)  ROI (se)            other: residual (se)  ROI (se)
+(0.0, 0.5]     +0.0355 (0.0213)  +0.0595 (0.0543) n=528   -0.0037 (0.0034)  -0.0421 (0.0125) n=17056
+(0.5, 0.65]    +0.0245 (0.0154)  +0.0135 (0.0260) n=994   +0.0108 (0.0087)  -0.0048 (0.0152) n=3219
+(0.65, 0.8]    +0.0043 (0.0118)  -0.0207 (0.0160) n=1401   +0.0319 (0.0141)  +0.0182 (0.0197) n=968
+(0.8, 1.0]     +0.0047 (0.0140)  -0.0230 (0.0162) n=636   +0.0052 (0.0403)  -0.0200 (0.0476) n=85
+pooled big-club residual vs others in the same band: +0.0076 (0.0103)

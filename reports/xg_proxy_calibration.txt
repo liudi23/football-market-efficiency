@@ -1,0 +1,10 @@
+StatsBomb 2015/16 xG matched to football-data: 1517/1522 matches
+
+leave-one-league-out, team-match rows
+proxy                                corr with xG   RMSE   coefficients (all four leagues)
+A: 0.31 x on-target (first proxy)    0.681          0.602  {}
+B: on-target + off-target            0.725          0.520  {'sot': np.float64(0.1944), 'off': np.float64(0.0517)}
+C: B + corners                       0.725          0.520  {'sot': np.float64(0.1944), 'off': np.float64(0.0517), 'c': np.float64(0.0)}
+
+reference: corr(goals, xG) = 0.598
+saved proxy B coefficients: {'sot': np.float64(0.1944), 'off': np.float64(0.0517)}

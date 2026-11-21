@@ -1,0 +1,27 @@
+snapshots: 26298  matches: 370  OU price unchanged from previous minute: 19%
+
+## 0. Size of the disagreement (OU market - match-odds implied), prob points
+   minute  0- 1: mean +6.47  mean |gap| 6.89  n=369
+   minute  1-30: mean +4.83  mean |gap| 6.03  n=10528
+   minute 30-46: mean +3.31  mean |gap| 4.92  n=5619
+   minute 46-75: mean +1.91  mean |gap| 4.93  n=7620
+   minute 75-95: mean -1.00  mean |gap| 4.65  n=2162
+
+## 1. Outcome: logit P(over) on logit(OU market) and logit(implied)
+   [all snapshots] n=26298  weight OU +0.951 (0.150)  weight implied +0.341 (0.147)   log loss OU 0.5439 implied 0.5453
+   [OU price fresh (changed in last minute)] n=21432  weight OU +0.968 (0.157)  weight implied +0.315 (0.144)   log loss OU 0.5460 implied 0.5472
+   [minute >= 1] n=25929  weight OU +0.948 (0.150)  weight implied +0.343 (0.147)   log loss OU 0.5421 implied 0.5434
+
+## 2. Who corrects?  5-minute-ahead change regressed on the gap (no goal in between)
+   [all] n=20267  OU market moves -0.243 (0.020) x gap;  implied moves +0.350 (0.019) x gap
+   [OU price fresh] n=16503  OU market moves -0.215 (0.019) x gap;  implied moves +0.357 (0.019) x gap
+   (negative OU slope = OU moves toward match odds; positive implied slope = match odds move toward OU)
+
+## 3. Trading the gap: back/lay OU 2.5 at the market price when |gap - kick-off gap| > thr
+   (no commission; last-traded price, so an upper bound)
+   thr 0.02 [all  ] trades 370  mean edge +0.0421 (0.0251) per unit
+   thr 0.02 [fresh] trades 370  mean edge +0.0334 (0.0250) per unit
+   thr 0.04 [all  ] trades 369  mean edge +0.0357 (0.0248) per unit
+   thr 0.04 [fresh] trades 369  mean edge +0.0294 (0.0245) per unit
+   thr 0.06 [all  ] trades 360  mean edge +0.0505 (0.0245) per unit
+   thr 0.06 [fresh] trades 359  mean edge +0.0315 (0.0242) per unit

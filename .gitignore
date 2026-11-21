@@ -20,3 +20,7 @@ data/BASIC/
 data/betfair/
 *.tar
 *.bz2
+data/BASIC_*/
+data/external/weather/
+data/external/understat_matches.csv
+data/external/understat_debug/

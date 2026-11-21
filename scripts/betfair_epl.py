@@ -11,7 +11,10 @@ Outputs (data/processed/, gitignored):
   betfair_epl_<season>_matches.csv   one row per match: timeline + checks
   betfair_epl_<season>_inplay.csv    one row per match-minute: score, market 1X2 and over-2.5 probabilities
 
-Usage:  python scripts/betfair_epl.py --season 2425
+Usage:
+    python scripts/betfair_epl.py --season 2425
+    python scripts/betfair_epl.py --season 2223 --root data/BASIC_2223 \
+        --index data/processed/betfair_index_2223
 """
 from __future__ import annotations
 
@@ -138,5 +141,7 @@ def main(season="2425", root="data/BASIC", index_dir="data/processed/betfair_ind
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--season", default="2425")
+    ap.add_argument("--root", default="data/BASIC", help="extracted Betfair BASIC folder")
+    ap.add_argument("--index", default="data/processed/betfair_index", help="index folder")
     a = ap.parse_args()
-    main(a.season)
+    main(a.season, a.root, a.index)

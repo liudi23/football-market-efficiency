@@ -1,0 +1,37 @@
+matches: 46274  (2016-07 to 2023-06)
+
+## 1. Home-win rate vs Pinnacle close, by period
+period    n      home win  market   residual (se)   home goal diff   ROI back away (se)
+before   24948   0.448    0.440   +0.0081 (0.0030)   +0.340            -0.0792 (0.0112)
+ghost     7843   0.407    0.411   -0.0031 (0.0052)   +0.187            -0.0246 (0.0190)
+after    13483   0.435    0.432   +0.0038 (0.0040)   +0.293            -0.0525 (0.0147)
+
+## 2. Ghost period by month: did the residual shrink as the market learned?
+month      n     home win  market   residual (se)   ROI back away (se)
+2020-06    417    0.384    0.410   -0.0265 (0.0228)   -0.0335 (0.0816)
+2020-07    537    0.454    0.420   +0.0348 (0.0202)   -0.0473 (0.0746)
+2020-08    116    0.362    0.417   -0.0552 (0.0426)   +0.2854 (0.1722)
+2020-09    457    0.416    0.416   -0.0007 (0.0216)   +0.0098 (0.0785)
+2020-10    739    0.422    0.412   +0.0107 (0.0172)   -0.0779 (0.0610)
+2020-11    650    0.372    0.410   -0.0374 (0.0177)   +0.0700 (0.0685)
+2020-12    909    0.400    0.412   -0.0113 (0.0156)   -0.0117 (0.0542)
+2021-01    917    0.414    0.405   +0.0089 (0.0151)   -0.0487 (0.0534)
+2021-02    846    0.394    0.404   -0.0103 (0.0158)   -0.0206 (0.0554)
+2021-03    689    0.411    0.401   +0.0096 (0.0178)   -0.0653 (0.0672)
+2021-04    876    0.417    0.409   +0.0077 (0.0158)   -0.0840 (0.0570)
+2021-05    617    0.417    0.425   -0.0087 (0.0182)   +0.0428 (0.0731)
+
+## 3. Ghost period in thirds (by date)
+first  2020-03-15..2020-11-14  n= 2614  residual -0.0017 (0.0091)  ROI away -0.0166 (0.0328)
+middle 2020-11-15..2021-02-15  n= 2614  residual -0.0163 (0.0090)  ROI away -0.0095 (0.0321)
+last   2021-02-15..2021-05-30  n= 2615  residual +0.0087 (0.0091)  ROI away -0.0477 (0.0339)
+
+## 4. Market-implied home edge (pH - pA) by period: how far did prices move?
+before  pH-pA +0.1442   actual H-A +0.1610
+ghost   pH-pA +0.0895   actual H-A +0.0819
+after   pH-pA +0.1291   actual H-A +0.1314
+
+## 5. First restart (Germany, May 2020) and first 4 weeks after each league restart
+May 2020 (mostly D1/D2): n=73 home win 0.329 market 0.411 resid -0.0824 (0.0542) ROI away -0.1930 (0.1527)
+first 4 weeks after restart, all leagues: n=865 resid -0.0175 (0.0157) ROI away -0.0455 (0.0533)
+before: ROI back home at Pinnacle close -0.0127 (0.0082)
